@@ -1,0 +1,5 @@
+data/processed/
+mlartifacts/
+mlops_project.egg-info/
+mlruns/
+*.pyc
