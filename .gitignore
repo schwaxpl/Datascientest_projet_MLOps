@@ -6,3 +6,4 @@ mlruns/
 logs/
 *.log
 .coverage
+*.old

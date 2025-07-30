@@ -1,0 +1,51 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches:
+      - main  # Déclencher le workflow sur les push vers main
+    tags:
+      - 'v*'  # Déclencher le workflow sur les tags commençant par 'v'
+
+# Définition des permissions nécessaires
+permissions:
+  contents: read
+
+jobs:
+  docker-build-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME  }}
+          password: ${{ secrets.DOCKERHUB_TOKEN  }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME  }}/dst-mlops
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME  }}/dst-mlops:buildcache
+          cache-to: type=registry,ref=${{ secrets.DOCKERHUB_USERNAME  }}/dst-mlops:buildcache,mode=max
