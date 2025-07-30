@@ -6,10 +6,10 @@ Contient toutes les constantes et paramètres utilisés dans les différents mod
 import os
 
 # Constantes MLflow
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
-
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+MLFLOW_REGISTRY_URI = os.getenv("MLFLOW_REGISTRY_URI", "http://mlflow:5000")
 # Noms des modèles et expériences
-MODEL_NAME = "dst_trustpilot_1"
+MODEL_NAME = "dst_trustpilot"
 INGESTION_EXPERIMENT_NAME = "data_ingestion_api"
 TRAINING_EXPERIMENT_NAME = "model_training"
 
@@ -37,3 +37,6 @@ REQUIRED_COLUMNS = ["Avis", "Note"]
 
 # Seuils de classification
 POSITIVE_REVIEW_THRESHOLD = 3  # Note > 3 est considérée comme positive
+
+# Seuils de validation et promotion de modèles
+VALIDATION_THRESHOLD = 0.75  # Accuracy minimale pour valider un modèle

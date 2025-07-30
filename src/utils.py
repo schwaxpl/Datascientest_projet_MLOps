@@ -7,8 +7,32 @@ from mlflow.tracking import MlflowClient
 import tensorflow as tf
 import pickle
 import os
+import boto3
 from typing import Optional, Dict
 import pandas as pd
+
+
+def get_mlflow_client():
+    """
+    Crée et retourne un client MLflow configuré pour fonctionner avec MinIO/S3.
+    Configure également les variables d'environnement S3 nécessaires.
+    
+    Returns:
+        MlflowClient: Un client MLflow configuré
+    """
+    # S'assurer que les variables d'environnement sont définies
+    mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    mlflow.set_tracking_uri(mlflow_tracking_uri)
+    
+    # Configuration pour S3/MinIO
+    if "MLFLOW_S3_ENDPOINT_URL" in os.environ:
+        # La configuration existe déjà, vérifier que boto3 est correctement configuré
+        boto3_session = boto3.Session(
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
+        )
+        
+    return MlflowClient(tracking_uri=mlflow_tracking_uri)
 
 def get_latest_model_version(client: MlflowClient, model_name: str):
     """
@@ -71,6 +95,8 @@ def load_model_from_registry(model_name: str, version: Optional[str] = None) -> 
 def get_latest_run_artifact(experiment_name: str, artifact_path: str, filter_string: str = "status = 'FINISHED'") -> str:
     """
     Récupère un artifact depuis le dernier run d'une expérience.
+    Si l'artifact est lié à un modèle ou vectorizer, privilégie l'utilisation
+    des fichiers locaux plutôt que de télécharger depuis MLflow.
     
     Args:
         experiment_name: Nom de l'expérience MLflow
@@ -78,8 +104,17 @@ def get_latest_run_artifact(experiment_name: str, artifact_path: str, filter_str
         filter_string: Filtre pour la recherche des runs
     
     Returns:
-        str: Chemin local vers l'artifact téléchargé
+        str: Chemin local vers l'artifact (local ou téléchargé depuis MLflow)
     """
+    # Vérifier si l'artifact est un modèle ou vectorizer local
+    from src.config import MODEL_PATH, VECTORIZER_PATH
+    
+    if artifact_path.endswith("vectorizer.pkl") and os.path.exists(VECTORIZER_PATH):
+        return VECTORIZER_PATH
+    elif artifact_path.endswith("model.pkl") and os.path.exists(MODEL_PATH):
+        return MODEL_PATH
+    
+    # Si ce n'est pas un fichier local connu, télécharger depuis MLflow
     client = MlflowClient()
     experiment = mlflow.get_experiment_by_name(experiment_name)
     if not experiment:
@@ -95,24 +130,38 @@ def get_latest_run_artifact(experiment_name: str, artifact_path: str, filter_str
     if not runs:
         raise ValueError(f"Aucun run trouvé pour l'expérience {experiment_name}")
     
+    # Télécharger l'artifact depuis MLflow directement au chemin de destination
     return client.download_artifacts(runs[0].info.run_id, artifact_path)
 
 def get_vectorizer_from_run(run_id: str, vectorizer_filename: str) -> object:
     """
-    Récupère le vectorizer depuis un run MLflow.
+    Récupère le vectorizer depuis un run MLflow ou depuis le fichier local.
+    Privilégie l'utilisation du fichier local dans /app/models/ au lieu de 
+    télécharger depuis MLflow.
     
     Args:
-        run_id: ID du run MLflow
+        run_id: ID du run MLflow (ignoré si le fichier local est disponible)
         vectorizer_filename: Nom du fichier du vectorizer
     
     Returns:
         Le vectorizer chargé
     """
-    client = MlflowClient()
-    local_path = client.download_artifacts(run_id, vectorizer_filename)
+    from src.config import VECTORIZER_PATH
     
-    with open(local_path, 'rb') as f:
-        return pickle.load(f)
+    # Privilégier le vectorizer local
+    try:
+        with open(VECTORIZER_PATH, 'rb') as f:
+            return pickle.load(f)
+    except Exception as e:
+        print(f"Vectorizer local non disponible: {str(e)}")
+        print("Tentative de récupération depuis MLflow...")
+        
+        # Si le vectorizer local n'est pas disponible, essayer de le récupérer depuis MLflow
+        client = MlflowClient()
+        local_path = client.download_artifacts(run_id, vectorizer_filename)
+        
+        with open(local_path, 'rb') as f:
+            return pickle.load(f)
 
 def get_latest_registered_version(client: MlflowClient, model_name: str):
     """

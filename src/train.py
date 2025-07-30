@@ -6,13 +6,20 @@ import pickle
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import os
 import mlflow
 import mlflow.tensorflow
 from mlflow.tracking import MlflowClient
 from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
+import time
+import uuid
+from datetime import datetime
+from src.logger_config import get_logger
+from src.utils import get_mlflow_client
+# Configuration du logger spécifique au module d'entraînement
+logger = get_logger('train')
 
 def get_ingestion_data(run_id: Optional[str] = None) -> str:
     """
@@ -25,14 +32,22 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
     Returns:
         str: Chemin vers le fichier de données traitées
     """
-    client = MlflowClient()
+    # Génération d'un ID unique pour cette opération
+    op_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{op_id}] Récupération des données d'ingestion - Run ID: {run_id or 'Auto (dernier run)'}")
+    
+    
+    client = get_mlflow_client()
     
     if run_id is None:
         # Recherche du dernier run réussi de l'expérience data_ingestion_api
+        logger.info(f"[{op_id}] Recherche du dernier run d'ingestion réussi")
         experiment = mlflow.get_experiment_by_name("data_ingestion_api")
         if not experiment:
+            logger.error(f"[{op_id}] Aucune expérience d'ingestion de données trouvée")
             raise ValueError("Aucune expérience d'ingestion de données trouvée")
         
+        logger.debug(f"[{op_id}] Recherche de runs pour l'expérience: {experiment.experiment_id}")
         runs = client.search_runs(
             experiment_ids=[experiment.experiment_id],
             filter_string="status = 'FINISHED'",
@@ -41,18 +56,76 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
         )
         
         if not runs:
+            logger.error(f"[{op_id}] Aucun run d'ingestion trouvé")
             raise ValueError("Aucun run d'ingestion trouvé")
             
         run_id = runs[0].info.run_id
+        logger.info(f"[{op_id}] Dernier run trouvé: {run_id}")
     
     # Téléchargement des artifacts du run spécifié
-    artifacts_dir = client.download_artifacts(run_id, "data_processed")
-    csv_files = [f for f in os.listdir(artifacts_dir) if f.endswith('.csv')]
+    logger.info(f"[{op_id}] Téléchargement des artifacts du run {run_id}")
+    start_time = time.time()
+    
+    # Récupérer d'abord la liste de tous les artifacts du run
+    logger.info(f"[{op_id}] Listing des artifacts disponibles dans le run {run_id}")
+    try:
+        artifacts = client.list_artifacts(run_id)
+        logger.info(f"[{op_id}] Artifacts disponibles dans le run: {[a.path for a in artifacts]}")
+        
+        # Vérifier si data_processed est présent dans les artefacts
+        data_processed_exists = any(a.path == "data_processed" or a.path.startswith("data_processed/") for a in artifacts)
+        logger.info(f"[{op_id}] data_processed {'existe' if data_processed_exists else 'n\'existe pas'} dans les artifacts")
+    except Exception as e:
+        logger.warning(f"[{op_id}] Erreur lors du listing des artifacts: {str(e)}")
+        data_processed_exists = False
+    
+    try:
+        # Essayer d'abord le chemin direct comme prévu dans data_ingestion.py
+        logger.info(f"[{op_id}] Tentative de téléchargement depuis 'data_processed'...")
+        artifacts_dir = client.download_artifacts(run_id, "data_processed")
+        logger.info(f"[{op_id}] Artifacts 'data_processed' téléchargés avec succès à: {artifacts_dir}")
+        
+        # Vérifier le contenu du dossier téléchargé
+        if os.path.exists(artifacts_dir) and os.path.isdir(artifacts_dir):
+            files_in_dir = os.listdir(artifacts_dir)
+            logger.info(f"[{op_id}] Contenu du dossier téléchargé: {files_in_dir}")
+            csv_files = [os.path.join(artifacts_dir, f) for f in files_in_dir if f.endswith('.csv')]
+            logger.info(f"[{op_id}] Fichiers CSV trouvés: {csv_files}")
+        else:
+            logger.warning(f"[{op_id}] Le chemin téléchargé n'est pas un dossier valide: {artifacts_dir}")
+            csv_files = []
+    except Exception as e:
+        logger.warning(f"[{op_id}] Erreur lors du téléchargement depuis 'data_processed': {str(e)}")
+        logger.info(f"[{op_id}] Tentative de téléchargement depuis la racine...")
+        
+        try:
+            # Plan B: télécharger tous les artefacts et chercher les CSVs
+            artifacts_dir = client.download_artifacts(run_id, "")
+            logger.info(f"[{op_id}] Tous les artifacts téléchargés dans: {artifacts_dir}")
+            
+            # Rechercher récursivement tous les fichiers CSV
+            csv_files = []
+            for root, dirs, files in os.walk(artifacts_dir):
+                logger.debug(f"[{op_id}] Parcours de {root}: {files}")
+                csv_files.extend([os.path.join(root, f) for f in files if f.endswith('.csv')])
+            
+            logger.info(f"[{op_id}] Fichiers CSV trouvés après recherche récursive: {csv_files}")
+        except Exception as second_e:
+            logger.error(f"[{op_id}] Échec également lors du téléchargement depuis la racine: {str(second_e)}")
+            raise ValueError(f"Impossible de récupérer les artifacts du run {run_id}: {str(e)} puis {str(second_e)}")
+            
+    logger.info(f"[{op_id}] Artifacts téléchargés en {time.time() - start_time:.3f}s - Chemin: {artifacts_dir}")
+    logger.info(f"[{op_id}] Fichiers CSV trouvés: {csv_files}")
     
     if not csv_files:
+        logger.error(f"[{op_id}] Aucun fichier CSV trouvé dans les artifacts du run {run_id}")
         raise ValueError(f"Aucun fichier CSV trouvé dans les artifacts du run {run_id}")
-        
-    return os.path.join(artifacts_dir, csv_files[0])
+    
+    # Utiliser directement le chemin complet du premier CSV trouvé
+    data_path = csv_files[0]
+    logger.info(f"[{op_id}] Fichier de données trouvé: {data_path}")
+    
+    return data_path
 
 from src.config import (
     MODEL_NAME,
@@ -173,6 +246,25 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
             mlflow.log_param("ingestion_run_id", run_id if run_id else "latest")
             mlflow.log_param("data_path", data_path)
             
+            # Log des références du modèle d'origine
+            mlflow.log_param("base_model_name", base_model_name or MODEL_NAME)
+            mlflow.log_param("base_model_version", base_model_version or "latest")
+            
+            # Log des métadonnées du dataset
+            try:
+                dataset_info = {
+                    "dataset_source": data_path,
+                    "dataset_size": len(data),
+                    "dataset_features": list(data.columns),
+                    "positive_samples": int(sum(y)),
+                    "negative_samples": int(len(y) - sum(y)),
+                    "creation_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                mlflow.log_dict(dataset_info, "dataset_info.json")
+                logger.info(f"Métadonnées du dataset loggées: {len(data)} échantillons")
+            except Exception as e:
+                logger.warning(f"Erreur lors du logging des métadonnées du dataset: {str(e)}")
+            
             # Log et enregistrement du modèle dans MLflow
             final_model_name = model_name or MODEL_NAME
             mlflow.keras.log_model(
@@ -184,6 +276,25 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
             # Récupérer la dernière version créée
             client = MlflowClient()
             latest_version = get_latest_registered_version(client, final_model_name)
+            
+            # Mettre le tag "à valider" pour ce nouveau modèle et utiliser un alias au lieu d'un stage
+            logger.info(f"Application du tag 'à valider' pour la version {latest_version.version}")
+            
+            # Set tag to indicate model needs validation
+            client.set_model_version_tag(
+                name=final_model_name,
+                version=latest_version.version,
+                key="status",
+                value="à valider"
+            )
+            
+            # Use alias instead of stage (recommended migration path)
+            client.set_registered_model_alias(
+                name=final_model_name,
+                alias="staging",
+                version=latest_version.version
+            )
+            logger.info(f"Version {latest_version.version} marquée comme 'à valider' et avec alias 'staging'")
             
             # Sauvegarde locale optionnelle
             #model.save('models/tf_idf_mdl.pkl')
