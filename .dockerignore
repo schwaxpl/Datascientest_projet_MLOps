@@ -1,0 +1,36 @@
+# Ignore les fichiers de log
+logs/
+*.log
+
+# Ignore les fichiers Python compilés
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Ignore les fichiers de distribution et build
+dist/
+build/
+*.egg-info/
+
+# Ignore les fichiers d'environnement
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Ignore les fichiers de données temporaires
+temp_*.csv
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Ignore les fichiers de VS Code
+.vscode/
+.idea/
+
+# Ignore les fichiers Docker temporaires
+.dockerignore

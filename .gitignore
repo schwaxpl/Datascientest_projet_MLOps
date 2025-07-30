@@ -3,3 +3,6 @@ mlartifacts/
 mlops_project.egg-info/
 mlruns/
 *.pyc
+logs/
+*.log
+.coverage
