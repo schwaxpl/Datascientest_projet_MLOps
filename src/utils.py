@@ -21,7 +21,7 @@ def get_mlflow_client():
         MlflowClient: Un client MLflow configuré
     """
     # S'assurer que les variables d'environnement sont définies
-    mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    mlflow_tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
     mlflow.set_tracking_uri(mlflow_tracking_uri)
     
     # Configuration pour S3/MinIO

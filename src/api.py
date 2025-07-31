@@ -265,7 +265,7 @@ def init_mlflow_model():
             # Le client MLflow est déjà configuré pour S3/MinIO par get_mlflow_client
             mlflow.set_experiment("model_training")
             experiment = mlflow.get_experiment_by_name("model_training")
-            artifact_uri = f"http://mlflow:5000/artifacts/{experiment.experiment_id}"
+            artifact_uri = f"{MLFLOW_TRACKING_URI}/artifacts/{experiment.experiment_id}"
             # Créer un run MLflow pour enregistrer le modèle initial
             with mlflow.start_run(run_name="initial_model_registration") as run:
                 client.set_tag(run.info.run_id, "mlflow.artifact.uri", artifact_uri)
