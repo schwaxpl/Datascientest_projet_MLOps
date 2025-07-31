@@ -74,7 +74,7 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
         
         # Vérifier si data_processed est présent dans les artefacts
         data_processed_exists = any(a.path == "data_processed" or a.path.startswith("data_processed/") for a in artifacts)
-        logger.info(f"[{op_id}] data_processed {'existe' if data_processed_exists else 'n\'existe pas'} dans les artifacts")
+        logger.info(f"[{op_id}] data_processed {'existe' if data_processed_exists else 'n existe pas'} dans les artifacts")
     except Exception as e:
         logger.warning(f"[{op_id}] Erreur lors du listing des artifacts: {str(e)}")
         data_processed_exists = False
