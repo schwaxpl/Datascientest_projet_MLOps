@@ -6,8 +6,8 @@ Contient toutes les constantes et paramètres utilisés dans les différents mod
 import os
 
 # Constantes MLflow
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-MLFLOW_REGISTRY_URI = os.getenv("MLFLOW_REGISTRY_URI", "http://mlflow:5000")
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+MLFLOW_REGISTRY_URI = os.getenv("MLFLOW_REGISTRY_URI", "http://localhost:5000")
 # Noms des modèles et expériences
 MODEL_NAME = "dst_trustpilot"
 INGESTION_EXPERIMENT_NAME = "data_ingestion_api"
