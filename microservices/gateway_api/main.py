@@ -70,6 +70,29 @@ app = FastAPI(
     """,
     version="1.0.0",
     lifespan=lifespan,
+    # Organisation des tags pour Swagger UI
+    openapi_tags=[
+        {
+            "name": "Authentication",
+            "description": "Endpoints liés à l'authentification et la gestion des utilisateurs"
+        },
+        {
+            "name": "System",
+            "description": "Endpoints système comme health check et documentation"
+        },
+        {
+            "name": "Prediction",
+            "description": "Endpoints liés aux prédictions et aux modèles de prédiction"
+        },
+        {
+            "name": "Data",
+            "description": "Endpoints liés à la gestion des données et des datasets"
+        },
+        {
+            "name": "Training",
+            "description": "Endpoints liés à l'entraînement et la gestion des modèles"
+        }
+    ],
 )
 
 # Configuration CORS
@@ -168,7 +191,7 @@ class HealthResponse(BaseModel):
     
 # Routes d'authentification
 
-@app.post("/token", response_model=Token)
+@app.post("/token", response_model=Token, tags=["Authentication"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     """
     Obtient un token JWT pour l'authentification.
@@ -208,7 +231,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         "user_info": user_info
     }
 
-@app.get("/me", response_model=UserInfo)
+@app.get("/me", response_model=UserInfo, tags=["Authentication"])
 async def read_users_me(current_user = Depends(get_current_active_user)):
     """
     Retourne les informations de l'utilisateur actuellement authentifié.
@@ -220,7 +243,7 @@ async def read_users_me(current_user = Depends(get_current_active_user)):
 
 # Routes de santé et d'administration
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """
     Vérifie l'état de santé de l'API Gateway et des services.
@@ -264,7 +287,7 @@ async def health_check():
         "services": services
     }
 
-@app.get("/api/docs")
+@app.get("/api/docs", tags=["System"])
 async def api_docs():
     """
     Redirige vers la documentation de l'API.
@@ -273,7 +296,7 @@ async def api_docs():
 
 # Routes pour le service de prédiction
 
-@app.post("/predict", response_model=PredictResponse, description="Prédit le sentiment d'un texte")
+@app.post("/predict", response_model=PredictResponse, description="Prédit le sentiment d'un texte", tags=["Prediction"])
 async def predict(
     text: str = Form(..., description="Le texte dont on veut prédire le sentiment"),
     model_name: Optional[str] = Form(None, description="Le nom du modèle à utiliser (optionnel)"),
@@ -312,7 +335,7 @@ async def predict(
         logger.error(f"Erreur lors de l'appel au service de prédiction: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de prédiction: {str(e)}")
 
-@app.post("/predict/batch", description="Prédit le sentiment de plusieurs textes à partir d'un fichier CSV")
+@app.post("/predict/batch", description="Prédit le sentiment de plusieurs textes à partir d'un fichier CSV", tags=["Prediction"])
 async def predict_batch(
     file: UploadFile = File(..., description="Fichier CSV avec une colonne 'texte'"),
     model_name: Optional[str] = Form(None, description="Le nom du modèle à utiliser (optionnel)"),
@@ -385,7 +408,7 @@ async def predict_batch(
         logger.error(f"Erreur lors de l'appel au service de prédiction par lots: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de prédiction par lots: {str(e)}")
 
-@app.get("/models", description="Liste les modèles disponibles pour la prédiction")
+@app.get("/models", description="Liste les modèles disponibles pour la prédiction", tags=["Prediction"])
 async def list_models(
     production_only: bool = Query(False, description="Afficher uniquement les modèles en production"),
     current_user = Depends(get_current_active_user)
@@ -409,100 +432,74 @@ async def list_models(
 
 # Routes pour le service de données
 
-@app.post("/data/upload", description="Upload de données d'entraînement")
-async def upload_data(request: Request, current_user = Depends(get_current_active_user)):
+@app.post("/data/upload", description="Upload de données d'entraînement", tags=["Data"])
+async def upload_data(
+    file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à traiter pour l'entraînement"),
+    current_user = Depends(get_current_active_user)
+):
     """
     Upload d'un fichier CSV contenant des données d'entraînement.
     
     ## Paramètres de formulaire
-    - **file**: Fichier CSV à uploader (obligatoire)
-    - **description**: Description optionnelle du jeu de données
-    - **tags**: Tags optionnels pour le jeu de données (séparés par des virgules)
+    - **file**: Fichier CSV à uploader (obligatoire). Doit contenir les colonnes 'Avis' et 'Note'.
     
     ## Retour
     - Informations sur le jeu de données traité et stocké
     """
     try:
-        # Pour les requêtes avec fichiers, on doit gérer différemment
-        form = await request.form()
-        files = {}
-        data = {}
+        # Préparation du fichier à envoyer
+        file_content = await file.read()
+        files = {"file": (file.filename, file_content)}
         
-        for key, value in form.items():
-            if hasattr(value, "filename"):
-                # C'est un fichier
-                file_content = await value.read()
-                files[key] = (value.filename, file_content)
-            else:
-                # C'est un champ de formulaire normal
-                data[key] = value
-                
-        return call_service(f"{DATA_API_URL}/upload", method="POST", data=data, files=files)
+        # Appel au service de données
+        return call_service(f"{DATA_API_URL}/upload", method="POST", files=files)
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (upload): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
 
-@app.post("/data/upload/validation", description="Upload de données de validation")
-async def upload_validation_data(request: Request, current_user = Depends(get_current_active_user)):
+@app.post("/data/upload/validation", description="Upload de données de validation", tags=["Data"])
+async def upload_validation_data(
+    file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à utiliser comme données de validation"),
+    current_user = Depends(get_current_active_user)
+):
     """
     Upload d'un fichier CSV contenant des données de validation.
     
     ## Paramètres de formulaire
-    - **file**: Fichier CSV à uploader (obligatoire)
-    - **description**: Description optionnelle du jeu de données de validation
-    - **tags**: Tags optionnels pour le jeu de données (séparés par des virgules)
+    - **file**: Fichier CSV à uploader (obligatoire). Doit contenir les colonnes 'Avis' et 'Note'.
     
     ## Retour
     - Informations sur le jeu de données de validation traité et stocké
     """
     try:
-        # Pour les requêtes avec fichiers, on doit gérer différemment
-        form = await request.form()
-        files = {}
-        data = {}
+        # Préparation du fichier à envoyer
+        file_content = await file.read()
+        files = {"file": (file.filename, file_content)}
         
-        for key, value in form.items():
-            if hasattr(value, "filename"):
-                # C'est un fichier
-                file_content = await value.read()
-                files[key] = (value.filename, file_content)
-            else:
-                # C'est un champ de formulaire normal
-                data[key] = value
-                
-        return call_service(f"{DATA_API_URL}/upload/validation", method="POST", data=data, files=files)
+        # Appel au service de données
+        return call_service(f"{DATA_API_URL}/upload/validation", method="POST", files=files)
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (upload validation): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
 
-@app.get("/data/datasets", response_model=DatasetListResponse, description="Liste les jeux de données disponibles")
+@app.get("/data/datasets", description="Liste les jeux de données disponibles", tags=["Data"])
 async def list_datasets(
-    limit: int = Query(10, ge=1, le=100, description="Nombre maximum de jeux de données à retourner"),
-    offset: int = Query(0, ge=0, description="Nombre de jeux de données à sauter"),
-    tag: Optional[str] = Query(None, description="Filtrer par tag"),
     current_user = Depends(get_current_active_user)
 ):
     """
-    Liste tous les jeux de données disponibles avec pagination et filtrage.
-    
-    ## Paramètres de requête
-    - **limit**: Nombre maximum de jeux de données à retourner (défaut: 10, max: 100)
-    - **offset**: Nombre de jeux de données à sauter (défaut: 0)
-    - **tag**: Filtrer par tag (optionnel)
+    Liste tous les jeux de données disponibles.
     
     ## Retour
     - Liste des jeux de données avec leurs métadonnées
     """
     try:
-        params = {"limit": limit, "offset": offset}
-        if tag:
-            params["tag"] = tag
-        return call_service(f"{DATA_API_URL}/datasets", params=params)
+        # Appel au service de données sans paramètres
+        return call_service(f"{DATA_API_URL}/datasets")
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (liste des datasets): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
 
-@app.get("/data/datasets/{dataset_id}", response_model=DatasetDetailResponse, description="Obtient les détails d'un jeu de données")
+@app.get("/data/datasets/{dataset_id}", response_model=DatasetDetailResponse, description="Obtient les détails d'un jeu de données", tags=["Data"])
 async def get_dataset(
     dataset_id: str = Path(..., title="ID du jeu de données", description="Identifiant unique du jeu de données", example="processed_data_20250721_001436.csv"),
     current_user = Depends(get_current_active_user)
@@ -524,7 +521,7 @@ async def get_dataset(
 
 # Routes pour le service d'entraînement
 
-@app.post("/train", response_model=TrainResponse, description="Entraîne un nouveau modèle")
+@app.post("/train", response_model=TrainResponse, description="Entraîne un nouveau modèle", tags=["Training"])
 async def train_model(
     dataset_id: str = Form(..., description="Identifiant du jeu de données à utiliser"),
     model_name: str = Form(..., description="Nom à donner au modèle entraîné"),
@@ -563,7 +560,7 @@ async def train_model(
         logger.error(f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
 
-@app.post("/validate", response_model=ValidateResponse, description="Valide un modèle existant")
+@app.post("/validate", response_model=ValidateResponse, description="Valide un modèle existant", tags=["Training"])
 async def validate_model(
     model_name: str = Form(..., description="Nom du modèle à valider"),
     version: str = Form(..., description="Version du modèle à valider"),
@@ -595,7 +592,7 @@ async def validate_model(
         logger.error(f"Erreur lors de l'appel au service d'entraînement (validation): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
 
-@app.post("/promote", description="Promeut un modèle en production")
+@app.post("/promote", description="Promeut un modèle en production", tags=["Training"])
 async def promote_model(
     model_name: str = Form(..., description="Nom du modèle à promouvoir"),
     version: str = Form(..., description="Version du modèle à promouvoir"),
@@ -617,7 +614,7 @@ async def promote_model(
         logger.error(f"Erreur lors de l'appel au service d'entraînement (promotion): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
 
-@app.get("/training/models", description="Liste les modèles entraînés")
+@app.get("/training/models", description="Liste les modèles entraînés", tags=["Training"])
 async def list_training_models(current_user = Depends(get_current_active_user)):
     """
     Liste tous les modèles entraînés avec leurs versions et statuts.
