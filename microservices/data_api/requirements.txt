@@ -4,3 +4,6 @@ numpy==1.26.4
 pandas==2.1.4
 python-multipart==0.0.20
 mlflow==3.1.1
+spacy==3.7.2
+nltk==3.8.1
+fr-core-news-sm==3.7.0
