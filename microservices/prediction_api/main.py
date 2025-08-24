@@ -26,7 +26,8 @@ from microservices.common.utils import get_mlflow_client, load_model_from_regist
 from microservices.common.config import (
     MODEL_NAME,
     VECTORIZER_PATH,
-    MLFLOW_TRACKING_URI
+    MLFLOW_TRACKING_URI,
+    MODEL_PATH
 )
 
 # Initialisation du système de logging
@@ -86,26 +87,17 @@ async def lifespan(app: FastAPI):
             try:
                 logger.info("Enregistrement du modèle local dans MLflow...")
                 
-                # Chemins possibles pour le modèle
-                model_paths = [
-                    "/app/models/tf_idf_mdl.pkl",  # Chemin dans le container
-                    "/app/models_persistent/tf_idf_mdl.pkl",  # Chemin dans le volume persistant
-                    os.path.join(os.path.dirname(__file__), "../../models/tf_idf_mdl.pkl")  # Chemin relatif
-                ]
+                # Utiliser le chemin du modèle défini dans la configuration
+                logger.info(f"Tentative de chargement du modèle depuis {MODEL_PATH}")
                 
-                # Chercher le modèle local
-                model_loaded = None
-                model_path_used = None
-                for path in model_paths:
-                    if os.path.exists(path):
-                        logger.info(f"Modèle local trouvé: {path}")
-                        with open(path, 'rb') as f:
-                            model_loaded = pickle.load(f)
-                        model_path_used = path
-                        break
-                
-                if model_loaded is None:
-                    raise FileNotFoundError(f"Modèle local non trouvé. Chemins essayés: {model_paths}")
+                # Charger le modèle local
+                if os.path.exists(MODEL_PATH):
+                    logger.info(f"Modèle local trouvé: {MODEL_PATH}")
+                    with open(MODEL_PATH, 'rb') as f:
+                        model_loaded = pickle.load(f)
+                    model_path_used = MODEL_PATH
+                else:
+                    raise FileNotFoundError(f"Modèle local non trouvé au chemin spécifié: {MODEL_PATH}")
                 
                 # Créer un run MLflow pour enregistrer le modèle
                 mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
@@ -209,33 +201,23 @@ app.add_middleware(
 )
 
 def load_vectorizer():
-    """Charge le vectorizer depuis le fichier local"""
+    """Charge le vectorizer depuis le fichier local en utilisant le chemin défini dans la configuration"""
     global vectorizer
     if vectorizer is None:
-        # Chemins possibles pour le vectorizer
-        paths = [
-            VECTORIZER_PATH,  # Défini par config.py (chemin principal ou persistant)
-            "/app/models/tf_idf_vectorizer.pkl",  # Dans le répertoire models normal
-            "/app/models_persistent/tf_idf_vectorizer.pkl",  # Dans le volume monté
-            os.path.join(os.path.dirname(__file__), "../../models/tf_idf_vectorizer.pkl"),  # Chemin relatif
-        ]
-        
-        # Essayer chaque chemin
-        for path in paths:
-            try:
-                logger.info(f"Tentative de chargement du vectorizer depuis {path}")
-                if os.path.exists(path):
-                    with open(path, 'rb') as f:
-                        vectorizer = pickle.load(f)
-                    logger.info(f"Vectorizer chargé avec succès depuis {path}")
-                    return vectorizer
-            except Exception as e:
-                logger.warning(f"Échec du chargement depuis {path}: {str(e)}")
-        
-        # Si on arrive ici, c'est qu'aucun chemin n'a fonctionné
-        error_msg = f"Vectorizer non trouvé. Chemins essayés: {paths}"
-        logger.error(error_msg)
-        raise FileNotFoundError(error_msg)
+        try:
+            logger.info(f"Tentative de chargement du vectorizer depuis {VECTORIZER_PATH}")
+            if os.path.exists(VECTORIZER_PATH):
+                with open(VECTORIZER_PATH, 'rb') as f:
+                    vectorizer = pickle.load(f)
+                logger.info(f"Vectorizer chargé avec succès depuis {VECTORIZER_PATH}")
+                return vectorizer
+            else:
+                error_msg = f"Vectorizer non trouvé au chemin spécifié: {VECTORIZER_PATH}"
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+        except Exception as e:
+            logger.error(f"Erreur lors du chargement du vectorizer depuis {VECTORIZER_PATH}: {str(e)}")
+            raise FileNotFoundError(f"Impossible de charger le vectorizer: {str(e)}")
     else:
         logger.debug("Utilisation du vectorizer en cache")
     return vectorizer
