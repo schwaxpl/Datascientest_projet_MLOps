@@ -15,7 +15,7 @@ docker login -u $DOCKERHUB_USERNAME
 
 # Build and push common image
 echo "Building common image..."
-docker build -t $DOCKERHUB_USERNAME/dst-mlops-common:$TAG ./microservices/common/
+docker build -t $DOCKERHUB_USERNAME/dst-mlops-common:$TAG -f ./microservices/common/Dockerfile .
 echo "Pushing common image..."
 docker push $DOCKERHUB_USERNAME/dst-mlops-common:$TAG
 
@@ -25,7 +25,7 @@ do
     echo "Building $SERVICE image..."
     docker build -t $DOCKERHUB_USERNAME/dst-mlops-$SERVICE:$TAG \
         --build-arg DOCKERHUB_USERNAME=$DOCKERHUB_USERNAME \
-        ./microservices/$SERVICE/
+        -f ./microservices/$SERVICE/Dockerfile .
     
     echo "Pushing $SERVICE image..."
     docker push $DOCKERHUB_USERNAME/dst-mlops-$SERVICE:$TAG

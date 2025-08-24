@@ -9,10 +9,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copier le code source dans le dossier microservices/common
-COPY . /app/microservices/common/
+COPY microservices/common/ /app/microservices/common/
 
 # Copier le code source global du projet
-COPY /src /app/src/
+COPY src/ /app/src/
 
 # Créer un lien symbolique pour la rétrocompatibilité
 RUN ln -sf /app/microservices/common /app/common

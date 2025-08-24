@@ -43,7 +43,7 @@ jobs:
       - name: Build and push Common Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./microservices/common
+          context: .
           file: ./microservices/common/Dockerfile
           push: true
           tags: ${{ steps.meta-common.outputs.tags }}
@@ -87,7 +87,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./microservices/${{ matrix.service }}
+          context: .
           file: ./microservices/${{ matrix.service }}/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}

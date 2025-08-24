@@ -19,14 +19,14 @@ docker login -u %DOCKERHUB_USERNAME%
 
 REM Build and push common image
 echo Building common image...
-docker build -t %DOCKERHUB_USERNAME%/dst-mlops-common:%TAG% ./microservices/common/
+docker build -t %DOCKERHUB_USERNAME%/dst-mlops-common:%TAG% -f ./microservices/common/Dockerfile .
 echo Pushing common image...
 docker push %DOCKERHUB_USERNAME%/dst-mlops-common:%TAG%
 
 REM Build and push microservice images
 FOR %%S IN (gateway_api prediction_api training_api data_api) DO (
     echo Building %%S image...
-    docker build -t %DOCKERHUB_USERNAME%/dst-mlops-%%S:%TAG% --build-arg DOCKERHUB_USERNAME=%DOCKERHUB_USERNAME% ./microservices/%%S/
+    docker build -t %DOCKERHUB_USERNAME%/dst-mlops-%%S:%TAG% --build-arg DOCKERHUB_USERNAME=%DOCKERHUB_USERNAME% -f ./microservices/%%S/Dockerfile .
     
     echo Pushing %%S image...
     docker push %DOCKERHUB_USERNAME%/dst-mlops-%%S:%TAG%
