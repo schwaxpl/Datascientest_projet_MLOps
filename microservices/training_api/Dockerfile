@@ -4,17 +4,19 @@ FROM ${DOCKERHUB_USERNAME}/dst-mlops-common:latest
 WORKDIR /app
 
 # Copier les fichiers de dépendances spécifiques à l'API d'entrainement
-COPY requirements.txt ./training-requirements.txt
+COPY microservices/training_api/requirements.txt ./training-requirements.txt
 
 # Installation des dépendances spécifiques
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r training-requirements.txt
 
 # Copier le code source de l'API d'entrainement
-COPY . /app/microservices/training_api/
+COPY microservices/training_api/ /app/microservices/training_api/
 
 # Créer les volumes nécessaires pour les modèles et les données
-RUN mkdir -p /app/models /app/src /app/data
+RUN mkdir -p /app/models /app/data
+
+# Le dossier src a déjà été copié dans l'image common
 
 # Créer les répertoires nécessaires
 RUN mkdir -p /app/logs

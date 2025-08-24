@@ -4,14 +4,14 @@ FROM ${DOCKERHUB_USERNAME}/dst-mlops-common:latest
 WORKDIR /app
 
 # Copier les fichiers de dépendances spécifiques à l'API gateway
-COPY requirements.txt ./gateway-requirements.txt
+COPY microservices/gateway_api/requirements.txt ./gateway-requirements.txt
 
 # Installation des dépendances spécifiques
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r gateway-requirements.txt
 
 # Copier le code source de l'API gateway
-COPY . /app/microservices/gateway_api/
+COPY microservices/gateway_api/ /app/microservices/gateway_api/
 
 # Créer les répertoires nécessaires
 RUN mkdir -p /app/logs
