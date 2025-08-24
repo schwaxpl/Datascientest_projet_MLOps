@@ -40,3 +40,6 @@ POSITIVE_REVIEW_THRESHOLD = 3  # Note > 3 est considérée comme positive
 
 # Seuils de validation et promotion de modèles
 VALIDATION_THRESHOLD = 0.75  # Accuracy minimale pour valider un modèle
+
+# Configuration du nettoyage des fichiers CSV
+AUTO_CLEAN_CSV = True  # Activer/désactiver le nettoyage automatique des fichiers CSV problématiques
