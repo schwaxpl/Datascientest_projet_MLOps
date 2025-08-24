@@ -18,6 +18,9 @@ RUN python -m spacy download fr_core_news_sm && \
 # Copier le code source de l'API de données
 COPY microservices/data_api/ /app/microservices/data_api/
 
+# Copier le fichier liste_fr.txt dans le répertoire racine pour le rendre accessible
+COPY microservices/data_api/liste_fr.txt /app/liste_fr.txt
+
 # Créer les volumes nécessaires pour les données
 RUN mkdir -p /app/data
 
