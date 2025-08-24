@@ -14,8 +14,8 @@ INGESTION_EXPERIMENT_NAME = "data_ingestion_api"
 TRAINING_EXPERIMENT_NAME = "model_training"
 
 # Chemins des fichiers
-MODEL_PATH = "app/models/tf_idf_mdl.pkl"
-VECTORIZER_PATH = "app/models/tf_idf_vectorizer.pkl"
+MODEL_PATH = "/app/models/tf_idf_mdl.pkl"
+VECTORIZER_PATH = "/app/models/tf_idf_vectorizer.pkl"
 
 # Paramètres d'entraînement
 TRAIN_TEST_SPLIT_RATIO = 0.2
