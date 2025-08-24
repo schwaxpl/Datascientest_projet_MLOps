@@ -9,16 +9,38 @@ if ! docker info > /dev/null 2>&1; then
   exit 1
 fi
 
-# Construire et démarrer les services
-echo "Construction et démarrage des conteneurs..."
-docker-compose -f docker-compose-microservices.yml up -d --build
+# Créer le fichier .env.microservices s'il n'existe pas
+if [ ! -f .env.microservices ]; then
+  echo "Création du fichier .env.microservices par défaut..."
+  cat > .env.microservices << EOF
+# Docker Compose environment variables for microservices
+# Use this file to control which image versions are pulled from Docker Hub
+
+# Docker Hub username
+DOCKERHUB_USERNAME=chameldst
+
+# Microservices image tags
+GATEWAY_API_IMAGE_TAG=latest
+PREDICTION_API_IMAGE_TAG=latest
+TRAINING_API_IMAGE_TAG=latest
+DATA_API_IMAGE_TAG=latest
+EOF
+fi
+
+# Récupérer les dernières images de Docker Hub
+echo "Récupération des images Docker depuis Docker Hub..."
+docker-compose -f docker-compose-microservices.yml --env-file .env.microservices pull
+
+# Démarrer les services
+echo "Démarrage des conteneurs..."
+docker-compose -f docker-compose-microservices.yml --env-file .env.microservices up -d
 
 # Vérifier que les services sont opérationnels
 echo "Attente du démarrage des services..."
 sleep 10
 
 echo "Vérification de l'état des services..."
-docker-compose -f docker-compose-microservices.yml ps
+docker-compose -f docker-compose-microservices.yml --env-file .env.microservices ps
 
 echo
 echo "Architecture microservices déployée!"

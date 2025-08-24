@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r prediction-requirements.txt
 
 # Copier le code source de l'API de prédiction
-COPY . /app/prediction_api/
+COPY . /app/microservices/prediction_api/
 
 # Créer les volumes nécessaires pour les modèles
 RUN mkdir -p /app/models /app/src
@@ -26,4 +26,4 @@ EXPOSE 8001
 ENV PYTHONPATH=/app
 
 # Commande par défaut
-CMD ["python", "microservices/prediction_api/main.py"]
+CMD ["python", "/app/microservices/prediction_api/main.py"]

@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r gateway-requirements.txt
 
 # Copier le code source de l'API gateway
-COPY . /app/gateway_api/
+COPY . /app/microservices/gateway_api/
 
 # Créer les répertoires nécessaires
 RUN mkdir -p /app/logs
@@ -23,4 +23,4 @@ EXPOSE 8000
 ENV PYTHONPATH=/app
 
 # Commande par défaut
-CMD ["python", "microservices/gateway_api/main.py"]
+CMD ["python", "/app/microservices/gateway_api/main.py"]

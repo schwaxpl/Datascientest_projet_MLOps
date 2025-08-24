@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r training-requirements.txt
 
 # Copier le code source de l'API d'entrainement
-COPY . /app/training_api/
+COPY . /app/microservices/training_api/
 
 # Créer les volumes nécessaires pour les modèles et les données
 RUN mkdir -p /app/models /app/src /app/data
@@ -26,4 +26,4 @@ EXPOSE 8002
 ENV PYTHONPATH=/app
 
 # Commande par défaut
-CMD ["python", "microservices/training_api/main.py"]
+CMD ["python", "/app/microservices/training_api/main.py"]

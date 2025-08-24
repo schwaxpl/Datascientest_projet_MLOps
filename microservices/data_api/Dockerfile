@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r data-requirements.txt
 
 # Copier le code source de l'API de données
-COPY . /app/data_api/
+COPY . /app/microservices/data_api/
 
 # Créer les volumes nécessaires pour les données
 RUN mkdir -p /app/data /app/src
@@ -27,4 +27,4 @@ EXPOSE 8003
 ENV PYTHONPATH=/app
 
 # Commande par défaut
-CMD ["python", "microservices/data_api/main.py"]
+CMD ["python", "/app/microservices/data_api/main.py"]

@@ -55,9 +55,7 @@ services:
 
   # Microservices métier
   gateway-api:
-    build:
-      context: .
-      dockerfile: microservices/gateway_api/Dockerfile
+    image: ${DOCKERHUB_USERNAME:-chameldst}/dst-mlops-gateway_api:${GATEWAY_API_IMAGE_TAG:-latest}
     container_name: mlops-gateway
     ports:
       - "8000:8000"
@@ -84,9 +82,7 @@ services:
       - mlops-network
 
   prediction-api:
-    build:
-      context: .
-      dockerfile: microservices/prediction_api/Dockerfile
+    image: ${DOCKERHUB_USERNAME:-chameldst}/dst-mlops-prediction_api:${PREDICTION_API_IMAGE_TAG:-latest}
     container_name: mlops-prediction
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
@@ -103,9 +99,7 @@ services:
       - mlops-network
 
   training-api:
-    build:
-      context: .
-      dockerfile: microservices/training_api/Dockerfile
+    image: ${DOCKERHUB_USERNAME:-chameldst}/dst-mlops-training_api:${TRAINING_API_IMAGE_TAG:-latest}
     container_name: mlops-training
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
@@ -124,9 +118,7 @@ services:
       - mlops-network
 
   data-api:
-    build:
-      context: .
-      dockerfile: microservices/data_api/Dockerfile
+    image: ${DOCKERHUB_USERNAME:-chameldst}/dst-mlops-data_api:${DATA_API_IMAGE_TAG:-latest}
     container_name: mlops-data
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
