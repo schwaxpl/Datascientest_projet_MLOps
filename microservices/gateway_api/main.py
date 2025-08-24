@@ -142,30 +142,44 @@ class PredictBatchResponse(BaseModel):
 
 class TrainRequest(BaseModel):
     """Modèle pour une requête d'entraînement"""
-    dataset_id: str = Field(..., title="ID du jeu de données", description="Identifiant du jeu de données à utiliser pour l'entraînement", example="processed_data_20250721_001436.csv")
-    model_name: str = Field(..., title="Nom du modèle", description="Nom à donner au modèle entraîné", example="sentiment_model")
-    params: Dict[str, Any] = Field(default_factory=dict, title="Paramètres", description="Paramètres d'entraînement du modèle", example={"max_features": 5000, "ngram_range": [1, 2]})
+    run_id: Optional[str] = Field(None, title="ID du run MLflow", description="ID du run MLflow contenant les données d'entraînement", example="a1b2c3d4e5f6")
+    model_name: Optional[str] = Field(None, title="Nom du modèle", description="Nom à donner au modèle entraîné", example="mon_nouveau_modele")
+    base_model_name: Optional[str] = Field(None, title="Nom du modèle de base", description="Nom du modèle à utiliser comme base", example="dst_trustpilot")
+    base_model_version: Optional[str] = Field(None, title="Version du modèle de base", description="Version du modèle de base à utiliser", example="1")
 
 class TrainResponse(BaseModel):
     """Modèle pour une réponse d'entraînement"""
-    model_name: str
-    model_version: int
-    training_info: Dict[str, Any]
-    metrics: Dict[str, float]
+    status: str = Field(..., title="Statut", description="Statut de la requête d'entraînement", example="success")
+    metrics: Dict[str, float] = Field(..., title="Métriques", description="Métriques d'entraînement et d'évaluation", example={"train_accuracy": 0.85, "test_accuracy": 0.82})
+    run_id: str = Field(..., title="ID du run MLflow", description="ID du run MLflow d'entraînement", example="a1b2c3d4e5f6")
+    data_path: str = Field(..., title="Chemin des données", description="Chemin vers les données utilisées pour l'entraînement", example="data/processed/processed_data_20250723_120000.csv")
+    message: str = Field(..., title="Message", description="Message décrivant le résultat de l'entraînement", example="Modèle entraîné avec succès")
+    model_name: str = Field(..., title="Nom du modèle", description="Nom du modèle enregistré", example="dst_trustpilot")
+    model_version: str = Field(..., title="Version du modèle", description="Version du modèle enregistré", example="2")
 
 class ValidateRequest(BaseModel):
-    """Modèle pour une requête de validation"""
-    model_name: str = Field(..., title="Nom du modèle", description="Nom du modèle à valider", example="sentiment_model")
-    version: int = Field(..., title="Version du modèle", description="Version du modèle à valider", example=1)
-    validation_dataset: str = Field(..., title="Jeu de données de validation", description="Identifiant du jeu de données à utiliser pour la validation", example="validation.csv")
+    """Modèle pour une requête de validation de modèle"""
+    model_name: Optional[str] = Field(None, title="Nom du modèle", description="Nom du modèle à valider (optionnel, tous les modèles en attente si non spécifié)", example="dst_trustpilot")
+    model_version: Optional[str] = Field(None, title="Version du modèle", description="Version du modèle à valider (obligatoire si model_name est spécifié)", example="2")
+    auto_approve: bool = Field(False, title="Approbation automatique", description="Si True, le modèle sera automatiquement promu en production s'il passe la validation", example=False)
+    threshold: Optional[float] = Field(None, title="Seuil de validation", description="Seuil d'accuracy pour considérer le modèle comme validé", example=0.75)
 
 class ValidateResponse(BaseModel):
-    """Modèle pour une réponse de validation"""
-    model_name: str
-    model_version: int
-    validation_info: Dict[str, Any]
-    metrics: Dict[str, float]
-    is_validated: bool
+    """Modèle pour une réponse de validation de modèle"""
+    status: str = Field(..., title="Statut", description="Statut de la requête de validation", example="success")
+    validation_id: str = Field(..., title="ID de validation", description="Identifiant unique de cette session de validation", example="a1b2c3d4")
+    models_validated: int = Field(..., title="Nombre de modèles validés", description="Nombre de modèles qui ont été validés", example=1)
+    results: List[Dict[str, Any]] = Field(..., title="Résultats", description="Résultats détaillés de la validation pour chaque modèle")
+    saved_path: Optional[str] = Field(None, title="Chemin sauvegardé", description="Chemin où sont stockées les données de validation", example="data/validation/validation_results_20250723.csv")
+
+class PromoteResponse(BaseModel):
+    """Réponse de promotion d'un modèle"""
+    status: str = Field(..., title="Statut", example="success")
+    model_name: str = Field(..., title="Nom du modèle")
+    model_version: str = Field(..., title="Version du modèle")
+    previous_stage: str = Field(..., title="Stage précédent")
+    current_stage: str = Field(..., title="Stage actuel")
+    message: str = Field(..., title="Message")
 
 class DatasetListResponse(BaseModel):
     """Modèle pour une réponse de liste de jeux de données"""
@@ -182,6 +196,22 @@ class DatasetDetailResponse(BaseModel):
     columns: List[str]
     sample_data: List[Dict[str, Any]]
     statistics: Dict[str, Any]
+    
+class ModelInfo(BaseModel):
+    """Modèle pour les informations détaillées sur un modèle ML"""
+    name: str = Field(..., title="Nom du modèle", description="Nom du modèle enregistré")
+    version: str = Field(..., title="Version du modèle", description="Version du modèle enregistré")
+    stage: str = Field(..., title="Étape", description="Étape actuelle du modèle (Staging, Production, etc.)")
+    creation_timestamp: int = Field(..., title="Timestamp de création", description="Date de création du modèle en timestamp Unix")
+    description: Optional[str] = Field(None, title="Description", description="Description du modèle")
+    tags: Dict[str, str] = Field(default_factory=dict, title="Tags", description="Tags associés au modèle")
+    metrics: Optional[Dict[str, float]] = Field(None, title="Métriques", description="Métriques de performance du modèle")
+    
+class ModelsResponse(BaseModel):
+    """Modèle pour une réponse de liste de modèles"""
+    models: List[ModelInfo] = Field(..., title="Liste des modèles")
+    production_model: Optional[ModelInfo] = Field(None, title="Modèle actuellement en production")
+    pending_models: List[ModelInfo] = Field(default_factory=list, title="Modèles en attente de validation")
 
 class HealthResponse(BaseModel):
     """État de santé de l'API Gateway et des services"""
@@ -523,37 +553,38 @@ async def get_dataset(
 
 @app.post("/train", response_model=TrainResponse, description="Entraîne un nouveau modèle", tags=["Training"])
 async def train_model(
-    dataset_id: str = Form(..., description="Identifiant du jeu de données à utiliser"),
-    model_name: str = Form(..., description="Nom à donner au modèle entraîné"),
-    max_features: Optional[int] = Form(None, description="Nombre maximum de features à utiliser"),
-    ngram_range_min: Optional[int] = Form(1, description="Valeur minimale pour n-gram"),
-    ngram_range_max: Optional[int] = Form(2, description="Valeur maximale pour n-gram"),
+    run_id: Optional[str] = Form(None, description="ID du run MLflow contenant les données d'entraînement (optionnel)"),
+    model_name: Optional[str] = Form(None, description="Nom à donner au modèle entraîné (optionnel)"),
+    base_model_name: Optional[str] = Form(None, description="Nom du modèle à utiliser comme base (optionnel)"),
+    base_model_version: Optional[str] = Form(None, description="Version du modèle de base à utiliser (optionnel)"),
     current_user = Depends(get_current_active_user)
 ):
     """
     Entraîne un nouveau modèle de sentiment sur un jeu de données.
     
     ## Paramètres de formulaire
-    - **dataset_id**: Identifiant du jeu de données à utiliser pour l'entraînement
-    - **model_name**: Nom à donner au modèle entraîné
-    - **max_features**: (Optionnel) Nombre maximum de features à utiliser
-    - **ngram_range_min**: (Optionnel) Valeur minimale pour n-gram (défaut: 1)
-    - **ngram_range_max**: (Optionnel) Valeur maximale pour n-gram (défaut: 2)
+    - **run_id**: (Optionnel) ID du run MLflow contenant les données d'entraînement.
+    - **model_name**: (Optionnel) Nom à donner au modèle entraîné.
+    - **base_model_name**: (Optionnel) Nom du modèle à utiliser comme base.
+    - **base_model_version**: (Optionnel) Version du modèle de base à utiliser.
     
     ## Retour
     - Informations sur le modèle entraîné et métriques de performance
     """
     try:
-        data = {
-            "dataset_id": dataset_id,
-            "model_name": model_name,
-            "params": {}
-        }
+        data = {}
         
-        if max_features:
-            data["params"]["max_features"] = max_features
-        
-        data["params"]["ngram_range"] = [ngram_range_min, ngram_range_max]
+        if run_id:
+            data["run_id"] = run_id
+            
+        if model_name:
+            data["model_name"] = model_name
+            
+        if base_model_name:
+            data["base_model_name"] = base_model_name
+            
+        if base_model_version:
+            data["base_model_version"] = base_model_version
         
         return call_service(f"{TRAINING_API_URL}/train", method="POST", data=data)
     except Exception as e:
@@ -562,46 +593,52 @@ async def train_model(
 
 @app.post("/validate", response_model=ValidateResponse, description="Valide un modèle existant", tags=["Training"])
 async def validate_model(
-    model_name: str = Form(..., description="Nom du modèle à valider"),
-    version: str = Form(..., description="Version du modèle à valider"),
-    validation_dataset: str = Form(..., description="Identifiant du jeu de données de validation"),
-    approve: bool = Form(False, description="Approuver le modèle automatiquement si la validation est réussie"),
+    model_name: Optional[str] = Form(None, description="Nom du modèle à valider"),
+    model_version: Optional[str] = Form(None, description="Version du modèle à valider"),
+    auto_approve: bool = Form(False, description="Approuver le modèle automatiquement si la validation est réussie"),
+    threshold: Optional[float] = Form(None, description="Seuil d'accuracy pour considérer le modèle comme validé"),
     current_user = Depends(get_current_active_user)
 ):
     """
-    Valide un modèle existant sur un jeu de données de validation.
+    Valide un modèle existant sur le jeu de données de validation.
     
     ## Paramètres de formulaire
-    - **model_name**: Nom du modèle à valider
-    - **version**: Version du modèle à valider
-    - **validation_dataset**: Identifiant du jeu de données de validation à utiliser
-    - **approve**: Approuver automatiquement le modèle si la validation est réussie (défaut: False)
+    - **model_name**: (Optionnel) Nom du modèle à valider. Si non fourni, tous les modèles en attente seront validés.
+    - **model_version**: (Optionnel) Version du modèle à valider. Requis si model_name est spécifié.
+    - **auto_approve**: Approuver automatiquement le modèle si la validation est réussie (défaut: False)
+    - **threshold**: (Optionnel) Seuil d'accuracy pour considérer le modèle comme validé
     
     ## Retour
     - Métriques de validation et statut de validation du modèle
     """
     try:
         data = {
-            "model_name": model_name,
-            "version": version,
-            "validation_dataset": validation_dataset,
-            "approve": approve
+            "auto_approve": auto_approve
         }
+        
+        if model_name:
+            data["model_name"] = model_name
+            
+        if model_version:
+            data["model_version"] = model_version
+            
+        if threshold is not None:
+            data["threshold"] = threshold
         return call_service(f"{TRAINING_API_URL}/validate", method="POST", data=data)
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service d'entraînement (validation): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
 
-@app.post("/promote", description="Promeut un modèle en production", tags=["Training"])
+@app.post("/promote/{model_name}/{version}", description="Promeut un modèle en production", tags=["Training"])
 async def promote_model(
-    model_name: str = Form(..., description="Nom du modèle à promouvoir"),
-    version: str = Form(..., description="Version du modèle à promouvoir"),
+    model_name: str = Path(..., title="Nom du modèle", description="Nom du modèle à promouvoir"),
+    version: str = Path(..., title="Version du modèle", description="Version du modèle à promouvoir"),
     current_user = Depends(get_current_active_user)
 ):
     """
-    Promeut un modèle validé en production.
+    Promeut directement un modèle en production sans validation.
     
-    ## Paramètres de formulaire
+    ## Paramètres de chemin
     - **model_name**: Nom du modèle à promouvoir
     - **version**: Version du modèle à promouvoir
     
@@ -614,7 +651,7 @@ async def promote_model(
         logger.error(f"Erreur lors de l'appel au service d'entraînement (promotion): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
 
-@app.get("/training/models", description="Liste les modèles entraînés", tags=["Training"])
+@app.get("/training/models", response_model=ModelsResponse, description="Liste les modèles entraînés", tags=["Training"])
 async def list_training_models(current_user = Depends(get_current_active_user)):
     """
     Liste tous les modèles entraînés avec leurs versions et statuts.
