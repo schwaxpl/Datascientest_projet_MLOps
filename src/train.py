@@ -352,13 +352,20 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
             except Exception as e:
                 logger.error(f"Erreur lors du chargement du vectoriseur: {str(e)}")
                 raise ValueError(f"Impossible de charger le vectoriseur depuis {VECTORIZER_PATH}: {str(e)}")
+
+            # Déterminer la colonne à utiliser pour les features: 'Mots_importants' si disponible, sinon 'Avis'
+            feature_column = 'Mots_importants' if 'Mots_importants' in data.columns else 'Avis'
+            logger.info(f"Utilisation de la colonne '{feature_column}' comme données d'entrée pour l'entraînement")
+            
+            # S'assurer que la colonne utilisée est de type string
+            data[feature_column] = data[feature_column].astype(str)
                 
             # Transformer le texte en features
             try:
-                X = vectorizer.transform(data['Avis'])
+                X = vectorizer.transform(data[feature_column])
             except Exception as e:
-                logger.error(f"Erreur lors de la vectorisation des avis: {str(e)}")
-                raise ValueError(f"Impossible de vectoriser les avis: {str(e)}")
+                logger.error(f"Erreur lors de la vectorisation des textes de la colonne '{feature_column}': {str(e)}")
+                raise ValueError(f"Impossible de vectoriser les textes: {str(e)}")
             
             # Split des données
             X_train, X_test, y_train, y_test = train_test_split(
@@ -420,6 +427,7 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
             # Log des paramètres
             mlflow.log_param("ingestion_run_id", run_id if run_id else "latest")
             mlflow.log_param("data_path", data_path)
+            mlflow.log_param("feature_column", feature_column)
             
             # Log des références du modèle d'origine
             mlflow.log_param("base_model_name", base_model_name or MODEL_NAME)
@@ -433,10 +441,11 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
                     "dataset_features": list(data.columns),
                     "positive_samples": int(sum(y)),
                     "negative_samples": int(len(y) - sum(y)),
+                    "feature_column_used": feature_column,  # Indique quelle colonne a été utilisée pour les features
                     "creation_date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 }
                 mlflow.log_dict(dataset_info, "dataset_info.json")
-                logger.info(f"Métadonnées du dataset loggées: {len(data)} échantillons")
+                logger.info(f"Métadonnées du dataset loggées: {len(data)} échantillons, colonne utilisée: {feature_column}")
             except Exception as e:
                 logger.warning(f"Erreur lors du logging des métadonnées du dataset: {str(e)}")
             
