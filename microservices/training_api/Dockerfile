@@ -1,4 +1,4 @@
-ARG DOCKERHUB_USERNAME=schwaxpl
+ARG DOCKERHUB_USERNAME=chameldst
 FROM ${DOCKERHUB_USERNAME}/dst-mlops-common:latest
 
 WORKDIR /app

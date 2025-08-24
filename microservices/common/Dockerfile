@@ -18,5 +18,5 @@ RUN ln -sf /app/microservices/common /app/common
 WORKDIR /app/microservices/common
 RUN pip install -e .
 WORKDIR /app
-
+ 
 CMD ["echo", "This is a base image for other microservices"]
