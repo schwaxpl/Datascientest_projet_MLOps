@@ -384,8 +384,20 @@ async def train_model(request: TrainingRequest):
             "model_version": metrics["model_version"]
         }
     except Exception as e:
-        logger.error(f"[{train_id}] Erreur lors de l'entraînement: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Erreur lors de l'entraînement: {str(e)}")
+        error_message = f"Erreur lors de l'entraînement: {str(e)}"
+        logger.error(f"[{train_id}] {error_message}", exc_info=True)
+        
+        # Ajouter des suggestions pour résoudre les problèmes courants
+        suggestions = ""
+        if "Error tokenizing data" in str(e) or "Buffer overflow" in str(e):
+            suggestions = (
+                "\n\nSuggestions de résolution:\n"
+                "1. Vérifiez le format du fichier CSV et assurez-vous qu'il est correctement formaté.\n"
+                "2. Si les avis contiennent des délimiteurs (virgules, etc.), assurez-vous qu'ils sont correctement échappés.\n"
+                "3. Essayez de prétraiter le fichier CSV avec un autre délimiteur comme ';' ou '|'."
+            )
+        
+        raise HTTPException(status_code=500, detail=f"{error_message}{suggestions}")
 
 @app.post("/validate", response_model=ValidationResponse)
 async def validate(request: ValidationRequest):

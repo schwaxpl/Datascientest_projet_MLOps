@@ -5,6 +5,7 @@ Module d'entraînement du modèle.
 import pickle
 import pandas as pd
 import numpy as np
+import sys
 from sklearn.model_selection import train_test_split
 from typing import Dict, Optional, Any
 import os
@@ -20,6 +21,88 @@ from src.logger_config import get_logger
 from src.utils import get_mlflow_client
 # Configuration du logger spécifique au module d'entraînement
 logger = get_logger('train')
+
+def diagnose_csv_file(file_path: str) -> Dict[str, Any]:
+    """
+    Analyse un fichier CSV pour identifier d'éventuels problèmes.
+    
+    Args:
+        file_path (str): Chemin vers le fichier CSV à analyser
+    
+    Returns:
+        Dict[str, Any]: Informations de diagnostic sur le fichier
+    """
+    diagnostics = {
+        "file_exists": os.path.exists(file_path),
+        "file_size": 0,
+        "file_size_mb": 0,
+        "num_lines": 0,
+        "line_issues": [],
+        "encoding_guess": None,
+        "first_lines": [],
+        "delimiters_found": {},
+        "status": "unknown"
+    }
+    
+    if not diagnostics["file_exists"]:
+        diagnostics["status"] = "error"
+        diagnostics["message"] = f"Le fichier {file_path} n'existe pas"
+        return diagnostics
+    
+    # Taille du fichier
+    file_size = os.path.getsize(file_path)
+    diagnostics["file_size"] = file_size
+    diagnostics["file_size_mb"] = file_size / (1024 * 1024)
+    
+    # Vérifier l'encodage (méthode simplifiée sans dépendances externes)
+    encodings_to_try = ['utf-8', 'latin1', 'cp1252']
+    for enc in encodings_to_try:
+        try:
+            with open(file_path, 'r', encoding=enc) as f:
+                f.read(1000)  # Lire un échantillon
+                diagnostics["encoding_guess"] = {"encoding": enc, "confidence": 1.0}
+                break
+        except UnicodeDecodeError:
+            continue
+    else:
+        diagnostics["encoding_guess"] = {"encoding": "unknown", "confidence": 0}
+    
+    # Nombre de lignes et premiers échantillons
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = 0
+            first_lines = []
+            delimiters = {',': 0, ';': 0, '\t': 0, '|': 0}
+            
+            for i, line in enumerate(f):
+                lines += 1
+                if i < 5:  # Capturer les 5 premières lignes
+                    first_lines.append(line.strip())
+                    # Compter les délimiteurs potentiels
+                    for d in delimiters:
+                        delimiters[d] += line.count(d)
+                
+                if i == 0:  # Analyser l'en-tête
+                    for d in delimiters:
+                        if d in line:
+                            # Nombre de champs avec ce délimiteur
+                            delimiters[d] = len(line.split(d))
+            
+            diagnostics["num_lines"] = lines
+            diagnostics["first_lines"] = first_lines
+            diagnostics["delimiters_found"] = delimiters
+            
+            # Déterminer le délimiteur probable
+            max_delimiter = max(delimiters.items(), key=lambda x: x[1])
+            diagnostics["likely_delimiter"] = max_delimiter[0]
+            
+            diagnostics["status"] = "ok"
+            
+    except Exception as e:
+        diagnostics["status"] = "error"
+        diagnostics["message"] = f"Erreur lors de l'analyse du fichier: {str(e)}"
+    
+    return diagnostics
 
 def get_ingestion_data(run_id: Optional[str] = None) -> str:
     """
@@ -164,6 +247,19 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
         ImportError: Si tensorflow/keras n'est pas installé
         Exception: Pour toute autre erreur pendant l'entraînement
     """
+    # Journalisation des paramètres
+    logger.info(f"Démarrage de l'entraînement avec paramètres: run_id={run_id}, model_name={model_name}, "
+                f"base_model_name={base_model_name}, base_model_version={base_model_version}")
+                
+    # Vérification de l'environnement
+    logger.info(f"Vérification de l'environnement: Python version={sys.version}, Pandas version={pd.__version__}")
+    
+    # Vérification des chemins
+    logger.info(f"Chemin de vectoriseur attendu: {VECTORIZER_PATH} (existe: {os.path.exists(VECTORIZER_PATH)})")
+    
+    # Vérification des variables d'environnement MLflow
+    logger.info(f"MLFLOW_TRACKING_URI={MLFLOW_TRACKING_URI}")
+    
     # Vérification de tensorflow
 
     # Configuration de MLflow
@@ -174,16 +270,95 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
         try:
             # Chargement et préparation des données
             data_path = get_ingestion_data(run_id)
-            data = pd.read_csv(data_path)
+            
+            # Vérifier si le fichier existe et n'est pas vide
+            if not os.path.exists(data_path):
+                raise FileNotFoundError(f"Le fichier de données {data_path} n'existe pas")
+            
+            file_size = os.path.getsize(data_path)
+            if file_size == 0:
+                raise ValueError(f"Le fichier de données {data_path} est vide")
+            
+            # Diagnostiquer le fichier CSV avant de le lire
+            logger.info(f"Diagnostic du fichier CSV: {data_path}")
+            diagnostics = diagnose_csv_file(data_path)
+            
+            if diagnostics["status"] == "error":
+                logger.error(f"Diagnostic du CSV a échoué: {diagnostics.get('message', 'Raison inconnue')}")
+            else:
+                logger.info(f"Fichier CSV diagnostiqué: {diagnostics['num_lines']} lignes, " 
+                           f"délimiteur probable: '{diagnostics['likely_delimiter']}', "
+                           f"taille: {diagnostics['file_size_mb']:.2f} MB")
+                
+                # Journaliser les premières lignes pour aider au diagnostic
+                logger.info("Premières lignes du fichier:")
+                for i, line in enumerate(diagnostics["first_lines"]):
+                    logger.info(f"Ligne {i}: {line[:150]}..." if len(line) > 150 else f"Ligne {i}: {line}")
+                    
+            # Déterminer les paramètres de lecture CSV en fonction du diagnostic
+            read_params = {
+                "low_memory": False,
+                "escapechar": '\\',
+                "on_bad_lines": 'skip'
+            }
+            
+            # Ajouter le délimiteur si détecté
+            if diagnostics.get("likely_delimiter") and diagnostics["likely_delimiter"] != ',':
+                read_params["sep"] = diagnostics["likely_delimiter"]
+                logger.info(f"Utilisation du délimiteur personnalisé: '{read_params['sep']}'")
+            
+            # Essayer de lire avec des options robustes pour traiter les fichiers problématiques
+            logger.info(f"Tentative de lecture du CSV avec les paramètres: {read_params}")
+            data = pd.read_csv(data_path, **read_params)
             
             if not all(col in data.columns for col in REQUIRED_COLUMNS):
                 raise ValueError(f"Le fichier doit contenir les colonnes {REQUIRED_COLUMNS}")
             
             # Préparation des features et labels
+            # Vérifier la présence de valeurs nulles dans les colonnes clés
+            null_notes = data['Note'].isnull().sum()
+            null_avis = data['Avis'].isnull().sum()
+            
+            if null_notes > 0 or null_avis > 0:
+                logger.warning(f"Détection de valeurs nulles: {null_notes} dans 'Note', {null_avis} dans 'Avis'")
+                # Filtrer les lignes avec des valeurs nulles
+                data = data.dropna(subset=['Note', 'Avis'])
+                logger.info(f"Après suppression des valeurs nulles: {len(data)} lignes")
+                
+                if len(data) == 0:
+                    raise ValueError("Après suppression des valeurs nulles, aucune donnée ne reste pour l'entraînement")
+            
+            # Convertir les valeurs de Note en numérique si ce n'est pas déjà le cas
+            if data['Note'].dtype == 'object':
+                try:
+                    data['Note'] = pd.to_numeric(data['Note'], errors='coerce')
+                    # Supprimer les lignes où la conversion a échoué
+                    data = data.dropna(subset=['Note'])
+                    logger.info(f"Conversion de 'Note' en numérique: {len(data)} lignes restantes")
+                except Exception as e:
+                    logger.error(f"Erreur lors de la conversion des notes: {str(e)}")
+                    raise ValueError(f"Impossible de convertir la colonne 'Note' en valeurs numériques: {str(e)}")
+            
+            # S'assurer que 'Avis' est de type string
+            data['Avis'] = data['Avis'].astype(str)
+            
+            # Générer les labels
             y = (data['Note'] > POSITIVE_REVIEW_THRESHOLD).astype(int)
-            with open(VECTORIZER_PATH, 'rb') as f:
-                vectorizer = pickle.load(f)
-            X = vectorizer.transform(data['Avis'])
+            
+            # Charger le vectoriseur
+            try:
+                with open(VECTORIZER_PATH, 'rb') as f:
+                    vectorizer = pickle.load(f)
+            except Exception as e:
+                logger.error(f"Erreur lors du chargement du vectoriseur: {str(e)}")
+                raise ValueError(f"Impossible de charger le vectoriseur depuis {VECTORIZER_PATH}: {str(e)}")
+                
+            # Transformer le texte en features
+            try:
+                X = vectorizer.transform(data['Avis'])
+            except Exception as e:
+                logger.error(f"Erreur lors de la vectorisation des avis: {str(e)}")
+                raise ValueError(f"Impossible de vectoriser les avis: {str(e)}")
             
             # Split des données
             X_train, X_test, y_train, y_test = train_test_split(
