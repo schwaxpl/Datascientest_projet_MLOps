@@ -111,7 +111,7 @@ class TrainingResponse(BaseModel):
         description="Statut de la requête d'entraînement",
         example="success"
     )
-    metrics: Dict[str, float] = Field(
+    metrics: Dict[str, Union[float, str]] = Field(
         ..., 
         title="Métriques", 
         description="Métriques d'entraînement et d'évaluation",
@@ -374,9 +374,17 @@ async def train_model(request: TrainingRequest):
         
         logger.info(f"[{train_id}] Modèle entraîné et enregistré - Run ID: {metrics['run_id']}, Modèle: {metrics['model_name']}, Version: {metrics['model_version']}")
         
+        # On restructure les métriques pour les rendre compatibles avec la définition du modèle
         return {
             "status": "success",
-            "metrics": metrics,
+            "metrics": {
+                "train_accuracy": metrics["train_accuracy"],
+                "test_accuracy": metrics["test_accuracy"],
+                "data_path": metrics["data_path"],
+                "run_id": metrics["run_id"],
+                "model_name": metrics["model_name"],
+                "model_version": metrics["model_version"]
+            },
             "run_id": metrics["run_id"],
             "data_path": metrics.get("data_path", "Unknown"),
             "message": f"Modèle {metrics['model_name']} v{metrics['model_version']} entraîné avec succès (accuracy: {metrics['test_accuracy']:.4f})",

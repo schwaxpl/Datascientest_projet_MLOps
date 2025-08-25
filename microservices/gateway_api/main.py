@@ -481,8 +481,8 @@ async def upload_data(
         file_content = await file.read()
         files = {"file": (file.filename, file_content)}
         
-        # Appel au service de données
-        return call_service(f"{DATA_API_URL}/upload", method="POST", files=files)
+        # Appel au service de données avec un timeout plus long
+        return call_service(f"{DATA_API_URL}/upload", method="POST", files=files, timeout=300)  # 5 minutes
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (upload): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
@@ -506,8 +506,8 @@ async def upload_validation_data(
         file_content = await file.read()
         files = {"file": (file.filename, file_content)}
         
-        # Appel au service de données
-        return call_service(f"{DATA_API_URL}/upload/validation", method="POST", files=files)
+        # Appel au service de données avec un timeout plus long
+        return call_service(f"{DATA_API_URL}/upload/validation", method="POST", files=files, timeout=300)  # 5 minutes
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (upload validation): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
@@ -586,7 +586,8 @@ async def train_model(
         if base_model_version:
             data["base_model_version"] = base_model_version
         
-        return call_service(f"{TRAINING_API_URL}/train", method="POST", data=data)
+        # Timeout augmenté pour permettre à l'entraînement de se terminer
+        return call_service(f"{TRAINING_API_URL}/train", method="POST", data=data, timeout=600)  # 10 minutes
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service d'entraînement: {str(e)}")
@@ -624,7 +625,8 @@ async def validate_model(
             
         if threshold is not None:
             data["threshold"] = threshold
-        return call_service(f"{TRAINING_API_URL}/validate", method="POST", data=data)
+        # Timeout augmenté pour permettre à la validation de se terminer
+        return call_service(f"{TRAINING_API_URL}/validate", method="POST", data=data, timeout=300)  # 5 minutes
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service d'entraînement (validation): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service d'entraînement: {str(e)}")

@@ -129,7 +129,7 @@ def get_vectorizer_from_run(run_id: str):
 
 # Fonctions pour la communication inter-services
 
-def call_service(url, method="GET", data=None, headers=None, files=None, timeout=10):
+def call_service(url, method="GET", data=None, headers=None, files=None, timeout=180):
     """
     Appelle un autre microservice avec gestion des erreurs.
     
