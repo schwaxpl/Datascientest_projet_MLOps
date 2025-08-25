@@ -181,91 +181,89 @@ def health_check():
 @app.get("/datasets", response_model=DatasetsResponse)
 def list_datasets():
     """
-    Liste tous les jeux de données disponibles.
+    Liste tous les jeux de données disponibles, en se basant sur les runs MLflow.
     """
     try:
-        # Récupérer la liste des fichiers dans le dossier processed
-        processed_dir = "data/processed"
-        files = os.listdir(processed_dir)
         datasets = []
+        processed_dir = "data/processed"
         
-        # Récupérer les runs d'ingestion depuis MLflow pour avoir plus d'informations
+        # Récupérer les runs d'ingestion depuis MLflow
         client = get_mlflow_client()
+        experiment_id = client.get_experiment_by_name(INGESTION_EXPERIMENT_NAME).experiment_id
+        
+        # Récupérer tous les runs de l'expérience d'ingestion
         runs = client.search_runs(
-            experiment_ids=[client.get_experiment_by_name(INGESTION_EXPERIMENT_NAME).experiment_id],
-            filter_string="",
+            experiment_ids=[experiment_id],
+            filter_string="status = 'FINISHED'",  # Ne récupérer que les runs réussis
             order_by=["start_time DESC"],
             max_results=1000
         )
         
-        # Créer un dictionnaire de runs pour faciliter la recherche
-        runs_dict = {}
-        for run in runs:
-            run_id = run.info.run_id
-            if "data_path" in run.data.params:
-                data_path = run.data.params["data_path"]
-                # Extraire juste le nom du fichier
-                file_name = os.path.basename(data_path)
-                runs_dict[file_name] = {
-                    "run_id": run_id,
-                    "stats": run.data.metrics,
-                    "is_validation": run.data.params.get("is_validation_set", "false").lower() == "true"
-                }
+        logger.info(f"Récupération de {len(runs)} runs MLflow pour l'expérience d'ingestion")
         
-        # Traiter chaque fichier
         training_count = 0
         validation_count = 0
         
-        for file in files:
-            if file.endswith(".csv"):
-                file_path = os.path.join(processed_dir, file)
-                stat = os.stat(file_path)
+        # Pour chaque run, créer un objet dataset
+        for run in runs:
+            run_id = run.info.run_id
+            
+            # Vérifier si le run contient un paramètre data_path
+            if "data_path" not in run.data.params:
+                logger.warning(f"Run {run_id} ne contient pas de data_path, ignoré")
+                continue
                 
-                # Déterminer si c'est un jeu d'entraînement ou de validation
-                is_validation = "validation" in file.lower()
+            data_path = run.data.params["data_path"]
+            file_name = os.path.basename(data_path)
+            
+            # Vérifier si le fichier est un fichier CSV
+            if not file_name.endswith(".csv"):
+                continue
                 
-                # Compter les lignes dans le fichier
-                import pandas as pd
+            # Déterminer s'il s'agit d'un jeu de données de validation ou d'entraînement
+            is_validation = run.data.params.get("is_validation_set", "false").lower() == "true"
+            if not is_validation:
+                is_validation = "validation" in file_name.lower()
+            
+            dataset_type = "validation" if is_validation else "entrainement"
+            
+            # Essayer de récupérer le fichier local pour obtenir plus d'informations
+            file_path = os.path.join(processed_dir, file_name)
+            n_rows = 0
+            created_at = run.info.start_time / 1000  # MLflow stocke en millisecondes
+            
+            if os.path.exists(file_path):
                 try:
+                    # Utiliser la date de modification du fichier
+                    stat = os.stat(file_path)
+                    created_at = stat.st_mtime
+                    
+                    # Compter les lignes dans le fichier
+                    import pandas as pd
                     df = pd.read_csv(file_path)
                     n_rows = len(df)
-                except:
-                    n_rows = 0
-                
-                # Récupérer les infos MLflow si disponibles
-                run_info = runs_dict.get(file, {})
-                run_id = run_info.get("run_id")
-                stats = run_info.get("stats", {})
-                
-                # Si pas d'info dans le dictionnaire mais qu'on a le chemin complet dans les runs
-                if not run_id:
-                    for r_file, r_info in runs_dict.items():
-                        if file in r_file:
-                            run_id = r_info.get("run_id")
-                            stats = r_info.get("stats", {})
-                            is_validation = r_info.get("is_validation", is_validation)
-                            break
-                
-                # Créer l'objet dataset
-                dataset_type = "validation" if is_validation else "entrainement"
-                dataset_info = DatasetInfo(
-                    id=str(uuid.uuid4())[:8],  # ID généré pour l'API
-                    name=file,
-                    type=dataset_type,
-                    created_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    n_rows=n_rows,
-                    file_path=file_path,
-                    run_id=run_id,
-                    stats=stats
-                )
-                
-                datasets.append(dataset_info)
-                
-                # Incrémenter le compteur approprié
-                if is_validation:
-                    validation_count += 1
-                else:
-                    training_count += 1
+                except Exception as e:
+                    logger.warning(f"Erreur lors de la lecture du fichier {file_name}: {str(e)}")
+            
+            # Créer l'objet dataset en utilisant le run_id comme identifiant
+            dataset_info = DatasetInfo(
+                id=run_id,  # Utiliser directement le run_id comme ID
+                name=file_name,
+                type=dataset_type,
+                created_at=datetime.fromtimestamp(created_at).isoformat(),
+                n_rows=n_rows,
+                file_path=file_path if os.path.exists(file_path) else data_path,
+                run_id=run_id,
+                stats=run.data.metrics
+            )
+            
+            datasets.append(dataset_info)
+            
+            # Incrémenter le compteur approprié
+            if is_validation:
+                validation_count += 1
+            else:
+                training_count += 1
         
         return {
             "datasets": sorted(datasets, key=lambda x: x.created_at, reverse=True),
@@ -279,19 +277,70 @@ def list_datasets():
 @app.get("/datasets/{dataset_id}", response_model=DatasetInfo)
 def get_dataset(dataset_id: str):
     """
-    Obtient les détails d'un jeu de données spécifique.
+    Obtient les détails d'un jeu de données spécifique en utilisant directement l'ID du run MLflow.
     """
     try:
-        # Récupérer tous les datasets
-        datasets_response = list_datasets()
+        # Récupérer le run MLflow correspondant
+        client = get_mlflow_client()
         
-        # Chercher celui avec l'ID correspondant
-        for dataset in datasets_response["datasets"]:
-            if dataset.id == dataset_id:
-                return dataset
+        try:
+            # Essayer de récupérer directement le run
+            run = client.get_run(dataset_id)
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du run MLflow {dataset_id}: {str(e)}")
+            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
         
-        # Si on arrive ici, le dataset n'a pas été trouvé
-        raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
+        # Vérifier que le run appartient à l'expérience d'ingestion
+        experiment = client.get_experiment(run.info.experiment_id)
+        if experiment.name != INGESTION_EXPERIMENT_NAME:
+            logger.warning(f"Le run {dataset_id} n'appartient pas à l'expérience d'ingestion")
+            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
+            
+        # Vérifier que le run contient un paramètre data_path
+        if "data_path" not in run.data.params:
+            logger.warning(f"Le run {dataset_id} ne contient pas de data_path")
+            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
+            
+        # Extraire les informations du run
+        data_path = run.data.params["data_path"]
+        file_name = os.path.basename(data_path)
+        
+        # Déterminer s'il s'agit d'un jeu de données de validation ou d'entraînement
+        is_validation = run.data.params.get("is_validation_set", "false").lower() == "true"
+        if not is_validation:
+            is_validation = "validation" in file_name.lower()
+        
+        dataset_type = "validation" if is_validation else "entrainement"
+        
+        # Essayer de récupérer le fichier local
+        processed_dir = "data/processed"
+        file_path = os.path.join(processed_dir, file_name)
+        n_rows = 0
+        created_at = run.info.start_time / 1000
+        
+        if os.path.exists(file_path):
+            try:
+                stat = os.stat(file_path)
+                created_at = stat.st_mtime
+                
+                # Compter les lignes
+                import pandas as pd
+                df = pd.read_csv(file_path)
+                n_rows = len(df)
+            except Exception as e:
+                logger.warning(f"Erreur lors de la lecture du fichier {file_name}: {str(e)}")
+        
+        # Créer l'objet dataset
+        return DatasetInfo(
+            id=dataset_id,
+            name=file_name,
+            type=dataset_type,
+            created_at=datetime.fromtimestamp(created_at).isoformat(),
+            n_rows=n_rows,
+            file_path=file_path if os.path.exists(file_path) else data_path,
+            run_id=dataset_id,
+            stats=run.data.metrics
+        )
     except HTTPException:
         raise
     except Exception as e:

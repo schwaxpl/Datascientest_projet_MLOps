@@ -150,7 +150,7 @@ class TrainRequest(BaseModel):
 class TrainResponse(BaseModel):
     """Modèle pour une réponse d'entraînement"""
     status: str = Field(..., title="Statut", description="Statut de la requête d'entraînement", example="success")
-    metrics: Dict[str, float] = Field(..., title="Métriques", description="Métriques d'entraînement et d'évaluation", example={"train_accuracy": 0.85, "test_accuracy": 0.82})
+    metrics: Dict[str, Any] = Field(..., title="Métriques", description="Métriques d'entraînement et d'évaluation", example={"train_accuracy": 0.85, "test_accuracy": 0.82, "data_path": "path/to/data.csv", "run_id": "a1b2c3d4"})
     run_id: str = Field(..., title="ID du run MLflow", description="ID du run MLflow d'entraînement", example="a1b2c3d4e5f6")
     data_path: str = Field(..., title="Chemin des données", description="Chemin vers les données utilisées pour l'entraînement", example="data/processed/processed_data_20250723_120000.csv")
     message: str = Field(..., title="Message", description="Message décrivant le résultat de l'entraînement", example="Modèle entraîné avec succès")

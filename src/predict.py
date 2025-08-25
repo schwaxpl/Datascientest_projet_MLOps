@@ -141,6 +141,11 @@ class PredictionService:
         
         # Prédiction
         try:
+            # Convertir la matrice sparse en tableau dense si nécessaire
+            if hasattr(X, "toarray"):
+                logger.debug("Conversion de la matrice sparse en tableau dense pour MLflow")
+                X = X.toarray()
+                
             predictions = self.model.predict(X)
             pred_time = time.time() - start_time
             
@@ -173,6 +178,11 @@ class PredictionService:
         X = self._prepare_input(text)
         
         try:
+            # Convertir la matrice sparse en tableau dense si nécessaire
+            if hasattr(X, "toarray"):
+                logger.debug("Conversion de la matrice sparse en tableau dense pour MLflow")
+                X = X.toarray()
+                
             # Prédiction avec le modèle
             pred = self.model.predict(X)
             pred_time = time.time() - start_time
