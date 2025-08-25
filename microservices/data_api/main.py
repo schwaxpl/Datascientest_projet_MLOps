@@ -342,6 +342,11 @@ def get_dataset(dataset_id: str):
             run_id=dataset_id,
             stats=run.data.metrics
         )
+    except HTTPException: 
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération du jeu de données {dataset_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération du jeu de données: {str(e)}")
 
 @app.get("/datasets/{dataset_id}/download")
 def download_dataset(dataset_id: str):
@@ -427,11 +432,6 @@ def download_dataset(dataset_id: str):
     except Exception as e:
         logger.error(f"Erreur lors du téléchargement du dataset {dataset_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors du téléchargement du dataset: {str(e)}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Erreur lors de la récupération du jeu de données {dataset_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération du jeu de données: {str(e)}")
 
 @app.post("/upload", response_model=IngestionResponse)
 async def upload_data(file: UploadFile = File(
