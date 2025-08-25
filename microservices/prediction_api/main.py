@@ -107,7 +107,7 @@ async def lifespan(app: FastAPI):
                     
                     # Enregistrer le modèle
                     artifact_path = "model"
-                    mlflow.sklearn.log_model(model_loaded, artifact_path)
+                    mlflow.keras.log_model(model_loaded, artifact_path)
                     
                     # Enregistrer le vectorizer comme artifact
                     vectorizer_temp_path = "/tmp/vectorizer.pkl"
