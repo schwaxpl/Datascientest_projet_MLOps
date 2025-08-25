@@ -196,6 +196,68 @@ def call_service(url, method="GET", data=None, headers=None, files=None, timeout
             detail=f"Erreur lors de la communication avec le service: {str(e)}"
         )
 
+async def call_service_stream(url, method="GET", data=None, headers=None, timeout=180):
+    """
+    Appelle un autre microservice et retourne une réponse en streaming.
+    Utile pour les téléchargements de fichiers.
+    
+    Args:
+        url (str): URL du service
+        method (str): Méthode HTTP (GET, POST)
+        data (dict): Données à envoyer
+        headers (dict): En-têtes HTTP
+        timeout (int): Timeout en secondes
+        
+    Returns:
+        Response: Objet de réponse requests avec un iter_content
+        
+    Raises:
+        HTTPException: En cas d'erreur
+    """
+    try:
+        import requests
+        
+        if method == "GET":
+            response = requests.get(url, params=data, headers=headers, timeout=timeout, stream=True)
+        elif method == "POST":
+            response = requests.post(url, json=data, headers=headers, timeout=timeout, stream=True)
+        else:
+            raise ValueError(f"Méthode non supportée pour le streaming: {method}")
+        
+        response.raise_for_status()
+        return response
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Le service n'est pas disponible: {url}"
+        )
+    except requests.exceptions.Timeout:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Timeout lors de la connexion au service: {url}"
+        )
+    except requests.exceptions.HTTPError as e:
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Ressource non trouvée: {url}"
+            )
+        else:
+            try:
+                error_detail = response.json().get("detail", str(e))
+            except:
+                error_detail = str(e)
+                
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Erreur du service: {error_detail}"
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la communication avec le service en streaming: {str(e)}"
+        )
+
 # Fonctions pour l'authentification et l'autorisation
 
 # Configuration de la sécurité des mots de passe

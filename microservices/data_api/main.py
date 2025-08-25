@@ -10,7 +10,8 @@ import tempfile
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query, Depends, Path
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+import io
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any
 from contextlib import asynccontextmanager
@@ -341,6 +342,91 @@ def get_dataset(dataset_id: str):
             run_id=dataset_id,
             stats=run.data.metrics
         )
+
+@app.get("/datasets/{dataset_id}/download")
+def download_dataset(dataset_id: str):
+    """
+    Télécharge un jeu de données spécifique au format CSV.
+    Utilise l'ID du run MLflow pour identifier le dataset.
+    """
+    try:
+        # Récupérer le run MLflow correspondant
+        client = get_mlflow_client()
+        
+        try:
+            # Essayer de récupérer directement le run
+            run = client.get_run(dataset_id)
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du run MLflow {dataset_id}: {str(e)}")
+            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
+        
+        # Vérifier que le run appartient à l'expérience d'ingestion
+        experiment = client.get_experiment(run.info.experiment_id)
+        if experiment.name != INGESTION_EXPERIMENT_NAME:
+            logger.warning(f"Le run {dataset_id} n'appartient pas à l'expérience d'ingestion")
+            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
+            
+        # Vérifier que le run contient un paramètre data_path
+        if "data_path" not in run.data.params:
+            logger.warning(f"Le run {dataset_id} ne contient pas de data_path")
+            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
+            
+        # Extraire le chemin du fichier
+        data_path = run.data.params["data_path"]
+        file_name = os.path.basename(data_path)
+        
+        # Chercher le fichier localement
+        processed_dir = "data/processed"
+        file_path = os.path.join(processed_dir, file_name)
+        
+        if os.path.exists(file_path):
+            # Si le fichier existe localement, le retourner directement
+            return FileResponse(
+                path=file_path, 
+                filename=file_name, 
+                media_type="text/csv"
+            )
+        
+        # Si le fichier n'existe pas localement, essayer de le récupérer depuis MLflow
+        # Récupérer l'artifact depuis MLflow
+        import pandas as pd
+        import tempfile
+        
+        # On essaie d'abord de lire depuis data_path si c'est un chemin accessible
+        if os.path.exists(data_path):
+            return FileResponse(
+                path=data_path,
+                filename=file_name,
+                media_type="text/csv"
+            )
+                
+        # Sinon, on cherche l'artifact dans MLflow
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
+                tmp_path = tmp.name
+                
+            # Essayer de télécharger l'artifact depuis MLflow
+            client.download_artifacts(run_id=dataset_id, path=os.path.basename(data_path), dst_path=os.path.dirname(tmp_path))
+            downloaded_path = os.path.join(os.path.dirname(tmp_path), os.path.basename(data_path))
+            
+            if os.path.exists(downloaded_path):
+                return FileResponse(
+                    path=downloaded_path,
+                    filename=file_name,
+                    media_type="text/csv"
+                )
+                
+            raise HTTPException(status_code=404, detail="Fichier introuvable dans MLflow")
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du fichier depuis MLflow: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération du fichier: {str(e)}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors du téléchargement du dataset {dataset_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors du téléchargement du dataset: {str(e)}")
     except HTTPException:
         raise
     except Exception as e:

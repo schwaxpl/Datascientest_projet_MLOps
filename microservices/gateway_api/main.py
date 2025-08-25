@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Depends, Request, status, Form, Path, Query, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any
@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from microservices.common.logger_config import init_logging, get_logger
 from microservices.common.utils import (
     call_service, 
+    call_service_stream,
     get_user, 
     authenticate_user, 
     create_access_token, 
@@ -187,15 +188,16 @@ class DatasetListResponse(BaseModel):
     total_count: int
 
 class DatasetDetailResponse(BaseModel):
-    """Modèle pour une réponse de détails d'un jeu de données"""
+    """Modèle pour une réponse de détails d'un jeu de données, 
+    adapté du modèle DatasetInfo de data_api"""
     dataset_id: str
     original_filename: str
+    dataset_type: str
     upload_date: str
-    processed_date: str
     rows_count: int
-    columns: List[str]
-    sample_data: List[Dict[str, Any]]
-    statistics: Dict[str, Any]
+    file_path: str
+    run_id: Optional[str] = None
+    statistics: Optional[Dict[str, Any]] = None
     
 class ModelInfo(BaseModel):
     """Modèle pour les informations détaillées sur un modèle ML"""
@@ -544,10 +546,58 @@ async def get_dataset(
     - Détails complets du jeu de données, incluant métadonnées, statistiques et échantillon de données
     """
     try:
-        return call_service(f"{DATA_API_URL}/datasets/{dataset_id}")
+        # Appel au service data_api
+        dataset_info = call_service(f"{DATA_API_URL}/datasets/{dataset_id}")
+        
+        # Adapter le format de DatasetInfo à DatasetDetailResponse
+        return {
+            "dataset_id": dataset_info["id"],
+            "original_filename": dataset_info["name"],
+            "dataset_type": dataset_info["type"],
+            "upload_date": dataset_info["created_at"],
+            "rows_count": dataset_info["n_rows"],
+            "file_path": dataset_info["file_path"],
+            "run_id": dataset_info.get("run_id"),
+            "statistics": dataset_info.get("stats", {})
+        }
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (détails dataset): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
+        
+@app.get("/data/datasets/{dataset_id}/download", description="Télécharge un jeu de données au format CSV", tags=["Data"])
+async def download_dataset(
+    dataset_id: str = Path(..., title="ID du jeu de données", description="Identifiant unique du jeu de données"),
+    current_user = Depends(get_current_active_user)
+):
+    """
+    Télécharge un jeu de données spécifique au format CSV.
+    
+    ## Paramètres
+    - **dataset_id**: Identifiant unique du jeu de données
+    
+    ## Retour
+    - Fichier CSV contenant les données du dataset
+    """
+    try:
+        # Appel au service data_api avec streaming pour éviter de charger tout le fichier en mémoire
+        response = await call_service_stream(f"{DATA_API_URL}/datasets/{dataset_id}/download")
+        
+        # Récupérer les informations sur le fichier depuis les headers
+        filename = response.headers.get("content-disposition", "").split("filename=")[-1].strip('"')
+        if not filename:
+            filename = f"dataset_{dataset_id}.csv"
+            
+        # Retourner le contenu en streaming
+        return StreamingResponse(
+            content=response.iter_content(chunk_size=8192),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Erreur lors du téléchargement du jeu de données: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors du téléchargement du jeu de données: {str(e)}")
 
 # Routes pour le service d'entraînement
 
