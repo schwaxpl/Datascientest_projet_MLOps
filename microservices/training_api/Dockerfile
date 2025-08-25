@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 COPY microservices/training_api/ /app/microservices/training_api/
 
 # Créer les volumes nécessaires pour les modèles et les données
-RUN mkdir -p /app/models /app/data
+RUN mkdir -p /app/data
 
 # Le dossier src a déjà été copié dans l'image common
 

@@ -1,0 +1,10 @@
+# Ignore data directory to prevent Airflow from parsing CSV files as DAGs
+^data/.*
+
+# Ignore temporary files
+^.*\.tmp$
+^.*\.temp$
+^.*\.bak$
+
+# Ignore any notebook files
+^.*\.ipynb$

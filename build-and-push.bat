@@ -32,4 +32,10 @@ FOR %%S IN (gateway_api prediction_api training_api data_api) DO (
     docker push %DOCKERHUB_USERNAME%/dst-mlops-%%S:%TAG%
 )
 
+echo Building airflow image...
+docker build -t %DOCKERHUB_USERNAME%/dst-mlops-airflow:%TAG% -f ./microservices/airflow_api/Dockerfile ./microservices/airflow_api
+
+echo Pushing airflow image...
+docker push %DOCKERHUB_USERNAME%/dst-mlops-airflow:%TAG%
+
 echo All images built and pushed successfully!

@@ -24,6 +24,7 @@ if not exist .env.microservices (
         echo PREDICTION_API_IMAGE_TAG=latest
         echo TRAINING_API_IMAGE_TAG=latest
         echo DATA_API_IMAGE_TAG=latest
+        echo AIRFLOW_IMAGE_TAG=latest
     ) > .env.microservices
 )
 
@@ -48,6 +49,7 @@ echo.
 echo Acces aux services:
 echo - API Gateway: http://localhost:8000
 echo - Documentation API: http://localhost:8000/docs
+echo - Airflow: http://localhost:8080 (admin/admin)
 echo - MLflow: http://localhost:5000
 echo - MinIO Console: http://localhost:9001
 echo.

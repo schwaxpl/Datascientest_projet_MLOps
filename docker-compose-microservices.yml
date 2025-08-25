@@ -91,7 +91,6 @@ services:
       - AWS_SECRET_ACCESS_KEY=minioadmin
     volumes:
       - ./docker_volumes/prediction/logs:/app/logs
-      - ./docker_volumes/prediction/models:/app/models_persistent
     depends_on:
       - mlflow
       - minio
@@ -109,7 +108,6 @@ services:
       - DATA_API_URL=http://data-api:8003
     volumes:
       - ./docker_volumes/training/logs:/app/logs
-      - ./docker_volumes/training/models:/app/models
     depends_on:
       - mlflow
       - minio
@@ -133,6 +131,119 @@ services:
       - minio
     networks:
       - mlops-network
+      
+  # Services Airflow
+  # Configuration commune pour les services Airflow
+  x-airflow-common: &airflow-common
+    image: apache/airflow:2.7.3-python3.10
+    environment: &airflow-common-env
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__FERNET_KEY=ZbQ2ng2SaOXuLtsOTA9qx3Db0G8EHVxT0q_OyCmsZcg=
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - GATEWAY_API_URL=http://gateway-api:8000
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-adminpassword}
+    volumes:
+      - ./microservices/airflow_api/dags:/opt/airflow/dags
+      - ./docker_volumes/airflow/logs:/opt/airflow/logs
+      - ./docker_volumes/airflow/plugins:/opt/airflow/plugins
+    user: "${AIRFLOW_UID:-50000}:0"
+    networks:
+      - mlops-network
+    depends_on:
+      - postgres
+      - gateway-api
+
+  # Base de données PostgreSQL pour Airflow
+  postgres:
+    image: postgres:15
+    container_name: mlops-airflow-postgres
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - ./docker_volumes/airflow/postgres-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: always
+    networks:
+      - mlops-network
+
+  # Webserver Airflow
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: mlops-airflow-webserver
+    command: >
+      bash -c "pip install -r /opt/airflow/dags/requirements.txt && airflow webserver"
+    ports:
+      - "8080:8080"
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Scheduler Airflow
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: mlops-airflow-scheduler
+    command: >
+      bash -c "pip install -r /opt/airflow/dags/requirements.txt && airflow scheduler"
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Initialisation de la base de données Airflow
+  airflow-init:
+    <<: *airflow-common
+    container_name: mlops-airflow-init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        function ver() {
+          printf "%04d%04d%04d%04d" $${1//./ }
+        }
+        
+        # Wait for Postgres to be ready
+        while ! pg_isready -h postgres -p 5432 -U airflow > /dev/null 2>&1; do
+          echo "Waiting for PostgreSQL to be ready..."
+          sleep 5
+        done
+        
+        pip install -r /opt/airflow/dags/requirements.txt
+        airflow db init
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 networks:
   mlops-network:

@@ -28,6 +28,7 @@ L'architecture se compose des éléments suivants :
 5. **Services d'Infrastructure**
    - MLflow pour le tracking des expériences et la gestion des modèles
    - MinIO (S3) pour le stockage des artefacts
+   - Airflow pour l'orchestration des workflows
 
 ## Organisation du Code
 
@@ -54,10 +55,17 @@ microservices/
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-└── data_api/                 # Service de gestion des données
-    ├── main.py               # Point d'entrée de l'API de données
+├── data_api/                 # Service de gestion des données
+│   ├── main.py               # Point d'entrée de l'API de données
+│   ├── Dockerfile
+│   └── requirements.txt
+│
+└── airflow_api/              # Service d'orchestration
     ├── Dockerfile
-    └── requirements.txt
+    ├── requirements.txt
+    └── dags/                 # Workflows d'automatisation
+        ├── mlops_data_ingestion_training.py
+        └── mlops_monitor_data.py
 ```
 
 ## Déploiement avec Docker Compose
@@ -82,6 +90,7 @@ docker-compose -f docker-compose-microservices.yml up -d
 - **Documentation API** : http://localhost:8000/docs
 - **Interface MLflow** : http://localhost:5000
 - **Interface MinIO** : http://localhost:9001
+- **Interface Airflow** : http://localhost:8080
 
 ## Authentification
 

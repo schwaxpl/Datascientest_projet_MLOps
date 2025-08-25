@@ -24,6 +24,7 @@ GATEWAY_API_IMAGE_TAG=latest
 PREDICTION_API_IMAGE_TAG=latest
 TRAINING_API_IMAGE_TAG=latest
 DATA_API_IMAGE_TAG=latest
+AIRFLOW_IMAGE_TAG=latest
 EOF
 fi
 
@@ -48,6 +49,7 @@ echo
 echo "Accès aux services:"
 echo "- API Gateway: http://localhost:8000"
 echo "- Documentation API: http://localhost:8000/docs"
+echo "- Airflow: http://localhost:8080 (admin/admin)"
 echo "- MLflow: http://localhost:5000"
 echo "- MinIO Console: http://localhost:9001"
 echo

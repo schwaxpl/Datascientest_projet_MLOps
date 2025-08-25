@@ -7,3 +7,4 @@ logs/
 *.log
 .coverage
 *.old
+microservices/airflow_api/dags/monitoring/
