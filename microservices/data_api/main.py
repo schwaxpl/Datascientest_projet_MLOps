@@ -299,6 +299,10 @@ def list_datasets():
                 except Exception as e:
                     logger.warning(f"Erreur lors de la lecture du fichier {file_name}: {str(e)}")
             
+            # Récupérer le nom de fichier original et le nom du dataset s'ils existent
+            original_filename = run.data.params.get("original_filename", None)
+            dataset_name = run.data.params.get("dataset_name", None)
+            
             # Créer l'objet dataset en utilisant le run_id comme identifiant
             dataset_info = DatasetInfo(
                 id=run_id,  # Utiliser directement le run_id comme ID
@@ -308,7 +312,9 @@ def list_datasets():
                 n_rows=n_rows,
                 file_path=file_path if os.path.exists(file_path) else data_path,
                 run_id=run_id,
-                stats=run.data.metrics
+                stats=run.data.metrics,
+                original_filename=original_filename,
+                dataset_name=dataset_name
             )
             
             datasets.append(dataset_info)

@@ -460,11 +460,13 @@ async def validate(request: ValidationRequest):
         if request.model_name and request.model_version:
             # Validation d'un modèle spécifique
             logger.info(f"[{validation_id}] Validation du modèle spécifique: {request.model_name} v{request.model_version}")
-            results = validate_and_promote_model(
+            validation_result = validate_and_promote_model(
                 model_name=request.model_name,
                 model_version=request.model_version,
                 threshold=request.threshold
             )
+            # Extraire les résultats (qui sont une liste) du dictionnaire retourné
+            results = validation_result.get("results", [])
             models_validated = 1
         else:
             # Validation de tous les modèles en attente
@@ -480,13 +482,19 @@ async def validate(request: ValidationRequest):
             approved = "approuvé" if res.get("approved", False) else "rejeté"
             logger.info(f"[{validation_id}] Modèle {res['model_name']} v{res['model_version']} {approved} (accuracy: {res.get('accuracy', 0):.4f})")
         
-        return {
+        # Préparer le retour avec les informations disponibles
+        response_data = {
             "status": "success",
             "validation_id": validation_id,
             "models_validated": models_validated,
-            "results": results,
-            "saved_path": results[0].get("data_path") if results else None
+            "results": results
         }
+        
+        # Ajouter le saved_path s'il est disponible dans les résultats
+        if results and isinstance(results, list) and len(results) > 0 and isinstance(results[0], dict):
+            response_data["saved_path"] = results[0].get("data_path")
+        
+        return response_data
     except Exception as e:
         logger.error(f"[{validation_id}] Erreur lors de la validation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Erreur lors de la validation: {str(e)}")

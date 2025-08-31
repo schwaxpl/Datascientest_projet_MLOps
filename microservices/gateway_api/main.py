@@ -199,9 +199,22 @@ class PromoteResponse(BaseModel):
     current_stage: str = Field(..., title="Stage actuel")
     message: str = Field(..., title="Message")
 
+class DatasetSummary(BaseModel):
+    """Modèle pour un élément de la liste de jeux de données"""
+    id: str
+    name: str
+    original_filename: Optional[str] = None
+    dataset_name: Optional[str] = None
+    type: str
+    created_at: str
+    n_rows: int
+    file_path: str
+    run_id: Optional[str] = None
+    stats: Optional[Dict[str, Any]] = None
+
 class DatasetListResponse(BaseModel):
     """Modèle pour une réponse de liste de jeux de données"""
-    datasets: List[Dict[str, Any]]
+    datasets: List[DatasetSummary]
     total_count: int
 
 class DatasetDetailResponse(BaseModel):
