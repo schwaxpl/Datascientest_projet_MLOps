@@ -12,7 +12,6 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query, Depends, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
-from fastapi.background import BackgroundTask
 import io
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any
@@ -412,11 +411,12 @@ def download_dataset(dataset_id: str):
                     client.download_artifacts(run_id=dataset_id, path=csv_path, dst_path=temp_dir)
                     downloaded_path = os.path.join(temp_dir, os.path.basename(csv_path))
                     
+                    # Remarque: le répertoire temp_dir sera automatiquement nettoyé par le système 
+                    # quand le fichier ne sera plus utilisé
                     return FileResponse(
                         path=downloaded_path,
                         filename=file_name,
-                        media_type="text/csv",
-                        background=BackgroundTask(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+                        media_type="text/csv"
                     )
             
             # Si on n'a pas trouvé de CSV dans data_processed, chercher dans tous les artifacts
@@ -438,8 +438,7 @@ def download_dataset(dataset_id: str):
                 return FileResponse(
                     path=downloaded_path,
                     filename=file_name,
-                    media_type="text/csv",
-                    background=BackgroundTask(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+                    media_type="text/csv"
                 )
             
             # Si on n'a toujours pas trouvé de CSV, essayer avec le data_path
@@ -456,12 +455,15 @@ def download_dataset(dataset_id: str):
                     return FileResponse(
                         path=downloaded_path,
                         filename=file_name,
-                        media_type="text/csv",
-                        background=BackgroundTask(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+                        media_type="text/csv"
                     )
             
             # Si on n'a toujours rien trouvé
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            # Nettoyage manuel du répertoire temporaire car on n'a pas de fichier à renvoyer
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
             raise HTTPException(status_code=404, detail="Fichier CSV introuvable dans les artifacts MLflow")
             
         except Exception as e:
