@@ -10,6 +10,7 @@ import tempfile
 import shutil
 from datetime import datetime
 import pandas as pd
+import mlflow
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query, Depends, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
@@ -647,29 +648,30 @@ async def balance_dataset_endpoint(request: BalanceRequest):
             # Enregistrer un nouveau run MLflow pour ce jeu de données équilibré
             experiment_id = client.get_experiment_by_name(INGESTION_EXPERIMENT_NAME).experiment_id
             
-            with client.start_run(experiment_id=experiment_id) as balanced_run:
+            # Utiliser mlflow.start_run au lieu de client.start_run
+            with mlflow.start_run(experiment_id=experiment_id) as balanced_run:
                 # Enregistrer les paramètres
-                client.log_param("original_dataset_id", dataset_id)
-                client.log_param("balance_strategy", request.strategy)
-                client.log_param("target_ratio", request.target_ratio)
-                client.log_param("random_seed", request.random_seed)
-                client.log_param("achieved_ratio", achieved_ratio)
-                client.log_param("data_path", balanced_filepath)
-                client.log_param("is_balanced_dataset", "true")
+                mlflow.log_param("original_dataset_id", dataset_id)
+                mlflow.log_param("balance_strategy", request.strategy)
+                mlflow.log_param("target_ratio", request.target_ratio)
+                mlflow.log_param("random_seed", request.random_seed)
+                mlflow.log_param("achieved_ratio", achieved_ratio)
+                mlflow.log_param("data_path", balanced_filepath)
+                mlflow.log_param("is_balanced_dataset", "true")
                 
                 # Enregistrer les métriques
-                client.log_metric("original_total", original_distribution['total'])
-                client.log_metric("original_positives", original_distribution['positive'])
-                client.log_metric("original_negatives", original_distribution['negative'])
-                client.log_metric("original_negative_percent", original_distribution['negative_percent'])
+                mlflow.log_metric("original_total", original_distribution['total'])
+                mlflow.log_metric("original_positives", original_distribution['positive'])
+                mlflow.log_metric("original_negatives", original_distribution['negative'])
+                mlflow.log_metric("original_negative_percent", original_distribution['negative_percent'])
                 
-                client.log_metric("balanced_total", balanced_distribution['total'])
-                client.log_metric("balanced_positives", balanced_distribution['positive'])
-                client.log_metric("balanced_negatives", balanced_distribution['negative'])
-                client.log_metric("balanced_negative_percent", balanced_distribution['negative_percent'])
+                mlflow.log_metric("balanced_total", balanced_distribution['total'])
+                mlflow.log_metric("balanced_positives", balanced_distribution['positive'])
+                mlflow.log_metric("balanced_negatives", balanced_distribution['negative'])
+                mlflow.log_metric("balanced_negative_percent", balanced_distribution['negative_percent'])
                 
                 # Uploader le fichier équilibré comme artifact
-                client.log_artifact(balanced_filepath, "data_processed")
+                mlflow.log_artifact(balanced_filepath, "data_processed")
                 
                 # ID du nouveau run
                 balanced_run_id = balanced_run.info.run_id
