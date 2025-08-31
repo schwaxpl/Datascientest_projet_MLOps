@@ -9,6 +9,7 @@ import uuid
 import tempfile
 import shutil
 from datetime import datetime
+import pandas as pd
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query, Depends, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
@@ -25,6 +26,7 @@ from microservices.common.config import (
     INGESTION_EXPERIMENT_NAME,
     REQUIRED_COLUMNS
 )
+from src.data_balancing import analyze_data_distribution, balance_dataset
 
 # Initialisation du système de logging
 loggers = init_logging("data", api=True)
@@ -126,6 +128,53 @@ class DatasetsResponse(BaseModel):
     datasets: List[DatasetInfo] = Field(..., title="Jeux de données disponibles")
     training_count: int = Field(..., title="Nombre de jeux d'entraînement")
     validation_count: int = Field(..., title="Nombre de jeux de validation")
+
+class BalanceRequest(BaseModel):
+    """Requête pour équilibrer un jeu de données"""
+    dataset_id: str = Field(..., title="ID du jeu de données à équilibrer")
+    strategy: str = Field(
+        "hybrid", 
+        title="Stratégie d'équilibrage",
+        description="Méthode utilisée pour équilibrer les données",
+        example="hybrid"
+    )
+    target_ratio: float = Field(
+        0.5, 
+        title="Ratio cible", 
+        description="Ratio cible pour la classe minoritaire (avis négatifs) entre 0 et 1",
+        example=0.5,
+        ge=0.0,
+        le=1.0
+    )
+    random_seed: int = Field(
+        42, 
+        title="Graine aléatoire", 
+        description="Graine pour la reproductibilité",
+        example=42
+    )
+
+class DistributionStats(BaseModel):
+    """Statistiques de distribution des avis"""
+    total: int = Field(..., title="Nombre total d'avis")
+    positive: int = Field(..., title="Nombre d'avis positifs")
+    negative: int = Field(..., title="Nombre d'avis négatifs")
+    positive_percent: float = Field(..., title="Pourcentage d'avis positifs")
+    negative_percent: float = Field(..., title="Pourcentage d'avis négatifs")
+
+class BalanceResponse(BaseModel):
+    """Résultat de l'équilibrage de données"""
+    status: str = Field(..., title="Statut", example="success")
+    message: str = Field(..., title="Message", example="Jeu de données équilibré avec succès")
+    original_dataset_id: str = Field(..., title="ID du jeu de données original")
+    balanced_dataset_id: str = Field(..., title="ID du jeu de données équilibré")
+    original_distribution: DistributionStats = Field(..., title="Distribution originale")
+    balanced_distribution: DistributionStats = Field(..., title="Distribution après équilibrage")
+    strategy_used: str = Field(..., title="Stratégie utilisée", example="hybrid")
+    target_ratio: float = Field(..., title="Ratio cible visé")
+    achieved_ratio: float = Field(..., title="Ratio effectivement atteint")
+    execution_time: float = Field(..., title="Temps d'exécution en secondes")
+    saved_path: str = Field(..., title="Chemin où les données équilibrées ont été sauvegardées")
+    run_id: str = Field(..., title="ID du run MLflow")
 
 class HealthResponse(BaseModel):
     """État de santé de l'API"""
@@ -475,6 +524,192 @@ def download_dataset(dataset_id: str):
     except Exception as e:
         logger.error(f"Erreur lors du téléchargement du dataset {dataset_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors du téléchargement du dataset: {str(e)}")
+
+@app.post("/datasets/balance", response_model=BalanceResponse)
+async def balance_dataset_endpoint(request: BalanceRequest):
+    """
+    Équilibre un jeu de données existant pour traiter le problème des classes déséquilibrées.
+    
+    Permet d'améliorer l'entraînement des modèles en présence d'un déséquilibre important
+    entre les avis positifs et négatifs (habituellement moins de 1% d'avis négatifs).
+    
+    Options de stratégie d'équilibrage:
+    - 'undersample': Sous-échantillonnage des avis positifs (classe majoritaire)
+    - 'oversample': Sur-échantillonnage des avis négatifs (classe minoritaire)
+    - 'hybrid': Approche hybride (recommandée) combinant les deux techniques
+    
+    Le ratio cible représente la proportion souhaitée d'avis négatifs dans le jeu final
+    (par exemple, 0.5 pour 50% d'avis négatifs).
+    
+    Returns:
+        BalanceResponse: Informations sur l'équilibrage et le jeu de données résultant
+    """
+    try:
+        start_time = time.time()
+        
+        # Récupérer le jeu de données original
+        dataset_id = request.dataset_id
+        client = get_mlflow_client()
+        
+        try:
+            # Récupérer le run MLflow correspondant
+            run = client.get_run(dataset_id)
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération du run MLflow {dataset_id}: {str(e)}")
+            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
+        
+        # Télécharger temporairement le jeu de données
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Trouver et télécharger le fichier CSV depuis les artifacts
+            data_path = run.data.params.get("data_path", "")
+            file_name = os.path.basename(data_path) if data_path else f"dataset_{dataset_id}.csv"
+            
+            # Chercher d'abord dans data_processed
+            artifacts = client.list_artifacts(run_id=dataset_id)
+            csv_path = None
+            
+            # Rechercher dans le dossier data_processed
+            data_processed_path = None
+            for artifact in artifacts:
+                if artifact.is_dir and artifact.path == "data_processed":
+                    data_processed_path = artifact.path
+                    break
+            
+            if data_processed_path:
+                data_processed_artifacts = client.list_artifacts(run_id=dataset_id, path=data_processed_path)
+                csv_artifacts = [a for a in data_processed_artifacts if a.path.endswith('.csv')]
+                
+                if csv_artifacts:
+                    csv_path = csv_artifacts[0].path
+            
+            # Si on n'a pas trouvé dans data_processed, chercher dans tous les artifacts
+            if not csv_path:
+                for artifact in artifacts:
+                    if not artifact.is_dir and artifact.path.endswith('.csv'):
+                        csv_path = artifact.path
+                        break
+            
+            # Si on n'a toujours pas trouvé, utiliser data_path
+            if not csv_path and data_path:
+                csv_path = os.path.basename(data_path)
+            
+            if not csv_path:
+                raise HTTPException(status_code=404, detail="Fichier CSV introuvable dans les artifacts MLflow")
+            
+            # Télécharger le fichier
+            local_path = os.path.join(temp_dir, os.path.basename(csv_path))
+            client.download_artifacts(run_id=dataset_id, path=csv_path, dst_path=temp_dir)
+            
+            if not os.path.exists(local_path):
+                raise HTTPException(status_code=404, detail="Échec du téléchargement du fichier CSV")
+            
+            # Charger les données
+            try:
+                data = pd.read_csv(local_path)
+            except Exception as e:
+                logger.error(f"Erreur lors de la lecture du CSV: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Format de fichier CSV invalide: {str(e)}")
+            
+            # Analyser la distribution initiale
+            original_distribution = analyze_data_distribution(data)
+            if 'error' in original_distribution:
+                raise HTTPException(status_code=400, detail=original_distribution['error'])
+            
+            # Appliquer l'équilibrage
+            try:
+                balanced_data = balance_dataset(
+                    data=data,
+                    strategy=request.strategy,
+                    target_ratio=request.target_ratio,
+                    random_seed=request.random_seed
+                )
+            except Exception as e:
+                logger.error(f"Erreur lors de l'équilibrage des données: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Erreur lors de l'équilibrage des données: {str(e)}")
+            
+            # Analyser la nouvelle distribution
+            balanced_distribution = analyze_data_distribution(balanced_data)
+            
+            # Calculer le ratio atteint
+            achieved_ratio = balanced_distribution['negative'] / balanced_distribution['total'] if balanced_distribution['total'] > 0 else 0
+            
+            # Enregistrer le jeu de données équilibré
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            balanced_filename = f"balanced_{timestamp}.csv"
+            balanced_filepath = os.path.join("data/processed", balanced_filename)
+            
+            # Créer le répertoire si nécessaire
+            os.makedirs("data/processed", exist_ok=True)
+            
+            # Sauvegarder le jeu équilibré
+            balanced_data.to_csv(balanced_filepath, index=False)
+            
+            # Enregistrer un nouveau run MLflow pour ce jeu de données équilibré
+            experiment_id = client.get_experiment_by_name(INGESTION_EXPERIMENT_NAME).experiment_id
+            
+            with client.start_run(experiment_id=experiment_id) as balanced_run:
+                # Enregistrer les paramètres
+                client.log_param("original_dataset_id", dataset_id)
+                client.log_param("balance_strategy", request.strategy)
+                client.log_param("target_ratio", request.target_ratio)
+                client.log_param("random_seed", request.random_seed)
+                client.log_param("achieved_ratio", achieved_ratio)
+                client.log_param("data_path", balanced_filepath)
+                client.log_param("is_balanced_dataset", "true")
+                
+                # Enregistrer les métriques
+                client.log_metric("original_total", original_distribution['total'])
+                client.log_metric("original_positives", original_distribution['positive'])
+                client.log_metric("original_negatives", original_distribution['negative'])
+                client.log_metric("original_negative_percent", original_distribution['negative_percent'])
+                
+                client.log_metric("balanced_total", balanced_distribution['total'])
+                client.log_metric("balanced_positives", balanced_distribution['positive'])
+                client.log_metric("balanced_negatives", balanced_distribution['negative'])
+                client.log_metric("balanced_negative_percent", balanced_distribution['negative_percent'])
+                
+                # Uploader le fichier équilibré comme artifact
+                client.log_artifact(balanced_filepath, "data_processed")
+                
+                # ID du nouveau run
+                balanced_run_id = balanced_run.info.run_id
+            
+            # Temps d'exécution
+            execution_time = time.time() - start_time
+            
+            # Construire la réponse
+            return {
+                "status": "success",
+                "message": f"Jeu de données équilibré avec succès en utilisant la stratégie '{request.strategy}'",
+                "original_dataset_id": dataset_id,
+                "balanced_dataset_id": balanced_run_id,
+                "original_distribution": {
+                    "total": original_distribution['total'],
+                    "positive": original_distribution['positive'],
+                    "negative": original_distribution['negative'],
+                    "positive_percent": original_distribution['positive_percent'],
+                    "negative_percent": original_distribution['negative_percent']
+                },
+                "balanced_distribution": {
+                    "total": balanced_distribution['total'],
+                    "positive": balanced_distribution['positive'],
+                    "negative": balanced_distribution['negative'],
+                    "positive_percent": balanced_distribution['positive_percent'],
+                    "negative_percent": balanced_distribution['negative_percent']
+                },
+                "strategy_used": request.strategy,
+                "target_ratio": request.target_ratio,
+                "achieved_ratio": achieved_ratio,
+                "execution_time": execution_time,
+                "saved_path": balanced_filepath,
+                "run_id": balanced_run_id
+            }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Erreur lors de l'équilibrage du jeu de données: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'équilibrage du jeu de données: {str(e)}")
 
 @app.post("/upload", response_model=IngestionResponse)
 async def upload_data(file: UploadFile = File(

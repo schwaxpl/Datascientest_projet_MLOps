@@ -63,7 +63,7 @@ app = FastAPI(
     ## Services disponibles
     
     * **Prédiction** : Analyse de sentiments d'avis clients
-    * **Données** : Gestion des jeux de données
+    * **Données** : Gestion des jeux de données, équilibrage des classes déséquilibrées
     * **Entraînement** : Entraînement et validation de modèles
     * **Administration** : Gestion des utilisateurs et des services
     
@@ -148,6 +148,22 @@ class TrainRequest(BaseModel):
     base_model_name: Optional[str] = Field(None, title="Nom du modèle de base", description="Nom du modèle à utiliser comme base", example="dst_trustpilot")
     base_model_version: Optional[str] = Field(None, title="Version du modèle de base", description="Version du modèle de base à utiliser", example="1")
 
+class TraceabilityInfo(BaseModel):
+    """Informations de traçabilité"""
+    run_id: str = Field(default="unknown", title="ID du Run", description="ID effectivement utilisé")
+    source: str = Field(default="unknown", title="Source", description="Origine de la sélection (spécifié ou auto-détecté)")
+
+class BaseModelInfo(BaseModel):
+    """Informations sur le modèle de base"""
+    name: str = Field(default="unknown", title="Nom", description="Nom du modèle de base")
+    version: str = Field(default="unknown", title="Version", description="Version du modèle de base")
+    source: str = Field(default="unknown", title="Source", description="Origine de la sélection (spécifié ou auto-détecté)")
+
+class TraceabilityData(BaseModel):
+    """Données de traçabilité complètes"""
+    ingestion: TraceabilityInfo = Field(..., title="Ingestion", description="Détails sur la source des données")
+    base_model: BaseModelInfo = Field(..., title="Modèle de base", description="Détails sur le modèle de base utilisé")
+
 class TrainResponse(BaseModel):
     """Modèle pour une réponse d'entraînement"""
     status: str = Field(..., title="Statut", description="Statut de la requête d'entraînement", example="success")
@@ -157,6 +173,7 @@ class TrainResponse(BaseModel):
     message: str = Field(..., title="Message", description="Message décrivant le résultat de l'entraînement", example="Modèle entraîné avec succès")
     model_name: str = Field(..., title="Nom du modèle", description="Nom du modèle enregistré", example="dst_trustpilot")
     model_version: str = Field(..., title="Version du modèle", description="Version du modèle enregistré", example="2")
+    traceability: Optional[TraceabilityData] = Field(None, title="Traçabilité", description="Informations détaillées sur les ressources effectivement utilisées")
 
 class ValidateRequest(BaseModel):
     """Modèle pour une requête de validation de modèle"""
@@ -198,6 +215,53 @@ class DatasetDetailResponse(BaseModel):
     file_path: str
     run_id: Optional[str] = None
     statistics: Optional[Dict[str, Any]] = None
+
+class DistributionStats(BaseModel):
+    """Statistiques de distribution des avis"""
+    total: int = Field(..., title="Nombre total d'avis")
+    positive: int = Field(..., title="Nombre d'avis positifs")
+    negative: int = Field(..., title="Nombre d'avis négatifs")
+    positive_percent: float = Field(..., title="Pourcentage d'avis positifs")
+    negative_percent: float = Field(..., title="Pourcentage d'avis négatifs")
+
+class BalanceRequest(BaseModel):
+    """Requête pour équilibrer un jeu de données"""
+    dataset_id: str = Field(..., title="ID du jeu de données à équilibrer")
+    strategy: str = Field(
+        "hybrid", 
+        title="Stratégie d'équilibrage",
+        description="Méthode utilisée pour équilibrer les données (undersample, oversample, hybrid)",
+        example="hybrid"
+    )
+    target_ratio: float = Field(
+        0.5, 
+        title="Ratio cible", 
+        description="Ratio cible pour la classe minoritaire (avis négatifs) entre 0 et 1",
+        example=0.5,
+        ge=0.0,
+        le=1.0
+    )
+    random_seed: int = Field(
+        42, 
+        title="Graine aléatoire", 
+        description="Graine pour la reproductibilité",
+        example=42
+    )
+
+class BalanceResponse(BaseModel):
+    """Résultat de l'équilibrage de données"""
+    status: str = Field(..., title="Statut", example="success")
+    message: str = Field(..., title="Message", example="Jeu de données équilibré avec succès")
+    original_dataset_id: str = Field(..., title="ID du jeu de données original")
+    balanced_dataset_id: str = Field(..., title="ID du jeu de données équilibré")
+    original_distribution: DistributionStats = Field(..., title="Distribution originale")
+    balanced_distribution: DistributionStats = Field(..., title="Distribution après équilibrage")
+    strategy_used: str = Field(..., title="Stratégie utilisée", example="hybrid")
+    target_ratio: float = Field(..., title="Ratio cible visé")
+    achieved_ratio: float = Field(..., title="Ratio effectivement atteint")
+    execution_time: float = Field(..., title="Temps d'exécution en secondes")
+    saved_path: str = Field(..., title="Chemin où les données équilibrées ont été sauvegardées")
+    run_id: str = Field(..., title="ID du run MLflow")
     
 class ModelInfo(BaseModel):
     """Modèle pour les informations détaillées sur un modèle ML"""
@@ -598,6 +662,45 @@ async def download_dataset(
     except Exception as e:
         logger.error(f"Erreur lors du téléchargement du jeu de données: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors du téléchargement du jeu de données: {str(e)}")
+
+@app.post("/data/datasets/balance", response_model=BalanceResponse, description="Équilibre un jeu de données pour gérer le déséquilibre des classes", tags=["Data"])
+async def balance_dataset(
+    request: BalanceRequest,
+    current_user = Depends(get_current_active_user)
+):
+    """
+    Équilibre un jeu de données existant pour traiter le problème des classes déséquilibrées.
+    
+    Permet d'améliorer l'entraînement des modèles en présence d'un déséquilibre important
+    entre les avis positifs et négatifs (habituellement moins de 1% d'avis négatifs).
+    
+    ## Options de stratégie d'équilibrage
+    - **undersample** : Sous-échantillonnage des avis positifs (classe majoritaire)
+    - **oversample** : Sur-échantillonnage des avis négatifs (classe minoritaire)
+    - **hybrid** : Approche hybride (recommandée) combinant les deux techniques
+    
+    ## Paramètres
+    - **dataset_id**: Identifiant unique du jeu de données à équilibrer
+    - **strategy**: Stratégie d'équilibrage à utiliser (undersample, oversample, hybrid)
+    - **target_ratio**: Ratio cible pour la classe minoritaire (0-1)
+    - **random_seed**: Graine aléatoire pour la reproductibilité
+    
+    ## Retour
+    - Détails sur l'équilibrage réalisé et ID du nouveau jeu de données équilibré
+    """
+    try:
+        # Appel au service data_api pour équilibrer le dataset
+        response = await call_service(
+            f"{DATA_API_URL}/datasets/balance",
+            method="POST",
+            json=request.dict()
+        )
+        
+        # Retourner le résultat de l'équilibrage
+        return response
+    except Exception as e:
+        logger.error(f"Erreur lors de l'équilibrage du jeu de données: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'équilibrage du jeu de données: {str(e)}")
 
 # Routes pour le service d'entraînement
 

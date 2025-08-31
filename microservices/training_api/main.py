@@ -103,6 +103,22 @@ class TrainingRequest(BaseModel):
             }
         }
 
+class TraceabilityInfo(BaseModel):
+    """Informations de traçabilité"""
+    run_id: str = Field(default="unknown", title="ID du Run", description="ID effectivement utilisé")
+    source: str = Field(default="unknown", title="Source", description="Origine de la sélection (spécifié ou auto-détecté)")
+
+class BaseModelInfo(BaseModel):
+    """Informations sur le modèle de base"""
+    name: str = Field(default="unknown", title="Nom", description="Nom du modèle de base")
+    version: str = Field(default="unknown", title="Version", description="Version du modèle de base")
+    source: str = Field(default="unknown", title="Source", description="Origine de la sélection (spécifié ou auto-détecté)")
+
+class TraceabilityData(BaseModel):
+    """Données de traçabilité complètes"""
+    ingestion: TraceabilityInfo = Field(..., title="Ingestion", description="Détails sur la source des données")
+    base_model: BaseModelInfo = Field(..., title="Modèle de base", description="Détails sur le modèle de base utilisé")
+
 class TrainingResponse(BaseModel):
     """Réponse d'entraînement du modèle"""
     status: str = Field(
@@ -128,6 +144,11 @@ class TrainingResponse(BaseModel):
         title="Chemin des données", 
         description="Chemin vers les données utilisées pour l'entraînement",
         example="data/processed/processed_data_20250723_120000.csv"
+    )
+    traceability: Optional[TraceabilityData] = Field(
+        None,
+        title="Traçabilité",
+        description="Informations détaillées sur les ressources effectivement utilisées"
     )
     message: str = Field(
         ..., 
@@ -374,6 +395,11 @@ async def train_model(request: TrainingRequest):
         
         logger.info(f"[{train_id}] Modèle entraîné et enregistré - Run ID: {metrics['run_id']}, Modèle: {metrics['model_name']}, Version: {metrics['model_version']}")
         
+        # Log des détails de traçabilité
+        logger.info(f"[{train_id}] Détails de traçabilité:")
+        logger.info(f"[{train_id}] - Run d'ingestion utilisé: {metrics.get('ingestion_run_id', 'unknown')} (source: {metrics.get('ingestion_run_id_source', 'unknown')})")
+        logger.info(f"[{train_id}] - Modèle de base utilisé: {metrics.get('base_model_name', 'unknown')} v{metrics.get('base_model_version', 'unknown')} (source: {metrics.get('base_model_version_source', 'unknown')})")
+        
         # On restructure les métriques pour les rendre compatibles avec la définition du modèle
         return {
             "status": "success",
@@ -389,7 +415,18 @@ async def train_model(request: TrainingRequest):
             "data_path": metrics.get("data_path", "Unknown"),
             "message": f"Modèle {metrics['model_name']} v{metrics['model_version']} entraîné avec succès (accuracy: {metrics['test_accuracy']:.4f})",
             "model_name": metrics["model_name"],
-            "model_version": metrics["model_version"]
+            "model_version": metrics["model_version"],
+            "traceability": {
+                "ingestion": {
+                    "run_id": metrics.get("ingestion_run_id", "unknown"),
+                    "source": metrics.get("ingestion_run_id_source", "unknown")
+                },
+                "base_model": {
+                    "name": metrics.get("base_model_name", "unknown"),
+                    "version": metrics.get("base_model_version", "unknown"),
+                    "source": metrics.get("base_model_version_source", "unknown")
+                }
+            }
         }
     except Exception as e:
         error_message = f"Erreur lors de l'entraînement: {str(e)}"

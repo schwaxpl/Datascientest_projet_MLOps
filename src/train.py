@@ -104,7 +104,7 @@ def diagnose_csv_file(file_path: str) -> Dict[str, Any]:
     
     return diagnostics
 
-def get_ingestion_data(run_id: Optional[str] = None) -> str:
+def get_ingestion_data(run_id: Optional[str] = None) -> tuple:
     """
     Récupère les données ingérées depuis MLflow.
     
@@ -113,7 +113,10 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
                               Si None, utilise le dernier run réussi.
     
     Returns:
-        str: Chemin vers le fichier de données traitées
+        tuple: (data_path, effective_run_id, run_source)
+               - data_path: Chemin vers le fichier de données traitées
+               - effective_run_id: ID du run effectivement utilisé
+               - run_source: Source du run (spécifié ou auto-détecté)
     """
     # Génération d'un ID unique pour cette opération
     op_id = str(uuid.uuid4())[:8]
@@ -122,7 +125,10 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
     
     client = get_mlflow_client()
     
-    if run_id is None:
+    effective_run_id = run_id
+    run_source = "spécifié"
+    
+    if effective_run_id is None:
         # Recherche du dernier run réussi de l'expérience data_ingestion_api
         logger.info(f"[{op_id}] Recherche du dernier run d'ingestion réussi")
         experiment = mlflow.get_experiment_by_name("data_ingestion_api")
@@ -142,17 +148,23 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
             logger.error(f"[{op_id}] Aucun run d'ingestion trouvé")
             raise ValueError("Aucun run d'ingestion trouvé")
             
-        run_id = runs[0].info.run_id
-        logger.info(f"[{op_id}] Dernier run trouvé: {run_id}")
+        effective_run_id = runs[0].info.run_id
+        run_source = "auto-détecté (latest)"
+        
+        # Récupérer des métadonnées supplémentaires sur ce run
+        run = client.get_run(effective_run_id)
+        run_date = datetime.fromtimestamp(run.info.start_time/1000).strftime('%Y-%m-%d %H:%M:%S')
+        run_user = run.data.tags.get('mlflow.user', 'inconnu')
+        logger.info(f"[{op_id}] Dernier run trouvé: {effective_run_id} (créé le {run_date} par {run_user})")
     
     # Téléchargement des artifacts du run spécifié
-    logger.info(f"[{op_id}] Téléchargement des artifacts du run {run_id}")
+    logger.info(f"[{op_id}] Téléchargement des artifacts du run {effective_run_id} ({run_source})")
     start_time = time.time()
     
     # Récupérer d'abord la liste de tous les artifacts du run
-    logger.info(f"[{op_id}] Listing des artifacts disponibles dans le run {run_id}")
+    logger.info(f"[{op_id}] Listing des artifacts disponibles dans le run {effective_run_id}")
     try:
-        artifacts = client.list_artifacts(run_id)
+        artifacts = client.list_artifacts(effective_run_id)
         logger.info(f"[{op_id}] Artifacts disponibles dans le run: {[a.path for a in artifacts]}")
         
         # Vérifier si data_processed est présent dans les artefacts
@@ -165,7 +177,7 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
     try:
         # Essayer d'abord le chemin direct comme prévu dans data_ingestion.py
         logger.info(f"[{op_id}] Tentative de téléchargement depuis 'data_processed'...")
-        artifacts_dir = client.download_artifacts(run_id, "data_processed")
+        artifacts_dir = client.download_artifacts(effective_run_id, "data_processed")
         logger.info(f"[{op_id}] Artifacts 'data_processed' téléchargés avec succès à: {artifacts_dir}")
         
         # Vérifier le contenu du dossier téléchargé
@@ -183,7 +195,7 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
         
         try:
             # Plan B: télécharger tous les artefacts et chercher les CSVs
-            artifacts_dir = client.download_artifacts(run_id, "")
+            artifacts_dir = client.download_artifacts(effective_run_id, "")
             logger.info(f"[{op_id}] Tous les artifacts téléchargés dans: {artifacts_dir}")
             
             # Rechercher récursivement tous les fichiers CSV
@@ -195,7 +207,7 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
             logger.info(f"[{op_id}] Fichiers CSV trouvés après recherche récursive: {csv_files}")
         except Exception as second_e:
             logger.error(f"[{op_id}] Échec également lors du téléchargement depuis la racine: {str(second_e)}")
-            raise ValueError(f"Impossible de récupérer les artifacts du run {run_id}: {str(e)} puis {str(second_e)}")
+            raise ValueError(f"Impossible de récupérer les artifacts du run {effective_run_id}: {str(e)} puis {str(second_e)}")
             
     logger.info(f"[{op_id}] Artifacts téléchargés en {time.time() - start_time:.3f}s - Chemin: {artifacts_dir}")
     logger.info(f"[{op_id}] Fichiers CSV trouvés: {csv_files}")
@@ -208,7 +220,7 @@ def get_ingestion_data(run_id: Optional[str] = None) -> str:
     data_path = csv_files[0]
     logger.info(f"[{op_id}] Fichier de données trouvé: {data_path}")
     
-    return data_path
+    return data_path, effective_run_id, run_source
 
 from src.config import (
     MODEL_NAME,
@@ -247,18 +259,19 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
         ImportError: Si tensorflow/keras n'est pas installé
         Exception: Pour toute autre erreur pendant l'entraînement
     """
-    # Journalisation des paramètres
-    logger.info(f"Démarrage de l'entraînement avec paramètres: run_id={run_id}, model_name={model_name}, "
-                f"base_model_name={base_model_name}, base_model_version={base_model_version}")
+    # Journalisation des paramètres d'entrée
+    train_id = str(uuid.uuid4())[:8]
+    logger.info(f"[{train_id}] Démarrage de l'entraînement avec paramètres: run_id={run_id or 'latest'}, model_name={model_name or MODEL_NAME}, "
+                f"base_model_name={base_model_name or MODEL_NAME}, base_model_version={base_model_version or 'latest'}")
                 
     # Vérification de l'environnement
-    logger.info(f"Vérification de l'environnement: Python version={sys.version}, Pandas version={pd.__version__}")
+    logger.info(f"[{train_id}] Vérification de l'environnement: Python version={sys.version}, Pandas version={pd.__version__}")
     
     # Vérification des chemins
-    logger.info(f"Chemin de vectoriseur attendu: {VECTORIZER_PATH} (existe: {os.path.exists(VECTORIZER_PATH)})")
+    logger.info(f"[{train_id}] Chemin de vectoriseur attendu: {VECTORIZER_PATH} (existe: {os.path.exists(VECTORIZER_PATH)})")
     
     # Vérification des variables d'environnement MLflow
-    logger.info(f"MLFLOW_TRACKING_URI={MLFLOW_TRACKING_URI}")
+    logger.info(f"[{train_id}] MLFLOW_TRACKING_URI={MLFLOW_TRACKING_URI}")
     
     # Vérification de tensorflow
 
@@ -269,7 +282,10 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
     with mlflow.start_run():
         try:
             # Chargement et préparation des données
-            data_path = get_ingestion_data(run_id)
+            data_path, effective_run_id, run_source = get_ingestion_data(run_id)
+            
+            # Log des informations sur le run d'ingestion utilisé
+            logger.info(f"[{train_id}] Utilisation du run d'ingestion: {effective_run_id} ({run_source})")
             
             # Vérifier si le fichier existe et n'est pas vide
             if not os.path.exists(data_path):
@@ -425,13 +441,33 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
             mlflow.log_metric("f1_score_class_0", classification_dict['0']['f1-score'])
             mlflow.log_metric("f1_score_class_1", classification_dict['1']['f1-score'])
             # Log des paramètres
-            mlflow.log_param("ingestion_run_id", run_id if run_id else "latest")
+            mlflow.log_param("ingestion_run_id", effective_run_id)
+            mlflow.log_param("ingestion_run_id_source", run_source)  
             mlflow.log_param("data_path", data_path)
             mlflow.log_param("feature_column", feature_column)
             
             # Log des références du modèle d'origine
-            mlflow.log_param("base_model_name", base_model_name or MODEL_NAME)
-            mlflow.log_param("base_model_version", base_model_version or "latest")
+            effective_base_model = base_model_name or MODEL_NAME
+            effective_base_version = base_model_version
+            
+            # Si la version du modèle de base n'est pas spécifiée, journaliser la version réelle utilisée
+            if not effective_base_version:
+                try:
+                    # Récupérer la dernière version du modèle de base
+                    client = MlflowClient()
+                    latest = get_latest_registered_version(client, effective_base_model)
+                    effective_base_version = latest.version if latest else "non trouvé"
+                    base_version_source = "auto-détecté (latest)"
+                except Exception as e:
+                    logger.warning(f"[{train_id}] Impossible de récupérer la dernière version du modèle de base: {str(e)}")
+                    effective_base_version = "unknown"
+                    base_version_source = "erreur de détection"
+            else:
+                base_version_source = "spécifié"
+                
+            mlflow.log_param("base_model_name", effective_base_model)
+            mlflow.log_param("base_model_version", effective_base_version)
+            mlflow.log_param("base_model_version_source", base_version_source)
             
             # Log des métadonnées du dataset
             try:
@@ -489,7 +525,13 @@ def train_model(run_id: Optional[str] = None, model_name: Optional[str] = None, 
                 "data_path": data_path,
                 "run_id": mlflow.active_run().info.run_id,
                 "model_name": final_model_name,
-                "model_version": latest_version.version
+                "model_version": latest_version.version,
+                # Informations de traçabilité
+                "ingestion_run_id": effective_run_id,
+                "ingestion_run_id_source": run_source,
+                "base_model_name": effective_base_model,
+                "base_model_version": effective_base_version,
+                "base_model_version_source": base_version_source
             }
                 
         except Exception as e:
