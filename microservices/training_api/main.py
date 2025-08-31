@@ -425,15 +425,14 @@ async def validate(request: ValidationRequest):
             logger.info(f"[{validation_id}] Validation du modèle spécifique: {request.model_name} v{request.model_version}")
             results = validate_and_promote_model(
                 model_name=request.model_name,
-                version=request.model_version,
-                auto_promote=request.auto_approve,
+                model_version=request.model_version,
                 threshold=request.threshold
             )
             models_validated = 1
         else:
             # Validation de tous les modèles en attente
             logger.info(f"[{validation_id}] Validation de tous les modèles en attente")
-            results = validate_model(auto_promote=request.auto_approve, threshold=request.threshold)
+            results = validate_model(approve=request.auto_approve, threshold=request.threshold)
             models_validated = len(results)
         
         execution_time = time.time() - start_time
@@ -467,7 +466,7 @@ async def promote_model(
         client = get_mlflow_client()
         
         # Vérifier que le modèle et la version existent
-        versions = client.search_model_versions(f"name='{model_name}' and version='{version}'")
+        versions = client.search_model_versions(f"name='{model_name}' and version_number='{version}'")
         if not versions:
             raise HTTPException(status_code=404, detail=f"Modèle {model_name} version {version} non trouvé")
         

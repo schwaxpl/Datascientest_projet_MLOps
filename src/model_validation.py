@@ -500,13 +500,14 @@ def validate_model(model_name: Optional[str] = None, model_version: Optional[str
         "results": validation_results
     }
 
-def validate_and_promote_model(model_name: str, model_version: str) -> Dict:
+def validate_and_promote_model(model_name: str, model_version: str, threshold: Optional[float] = None) -> Dict:
     """
     Valide un modèle spécifique et le promeut en production s'il est validé.
     
     Args:
         model_name: Nom du modèle à valider
         model_version: Version du modèle à valider
+        threshold: Seuil d'accuracy pour l'approbation automatique (optionnel)
         
     Returns:
         Dict: Résultat de la validation et de la promotion
@@ -515,7 +516,8 @@ def validate_and_promote_model(model_name: str, model_version: str) -> Dict:
     validation_result = validate_model(
         model_name=model_name,
         model_version=model_version,
-        approve=True
+        approve=True,
+        threshold=threshold
     )
     
     return validation_result
