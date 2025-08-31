@@ -6,25 +6,7 @@ Utilise MLflow pour le tracking des métriques et paramètres.
 
 import pandas as pd
 import numpy as np
-from typing import Tuple, Dic    def __init__(self, data_path: str, experiment_name: str,
-                 is_validation_set: bool = False, original_filename: str = None):
-        """
-        Initialise le pipeline d'ingestion de données.
-        
-        Args:
-            data_path (str): Chemin vers le fichier de données
-            experiment_name (str): Nom de l'expérience MLflow
-            is_validation_set (bool): Si True, les données seront taguées comme "jdd validation"
-                                     sinon comme "jdd entrainement"
-            original_filename (str): Nom du fichier original uploadé par l'utilisateur
-        """
-        # Génération d'un ID unique pour ce pipeline d'ingestion
-        self.pipeline_id = str(uuid.uuid4())[:8]
-        logger.info(f"[{self.pipeline_id}] Initialisation du pipeline d'ingestion - Fichier: {data_path}")
-        
-        self.data_path = data_path
-        self.required_columns = REQUIRED_COLUMNS
-        self.original_filename = original_filename or os.path.basename(data_path) List, Set
+from typing import Tuple, Dict, List, Set, Optional, Any
 import mlflow
 import time
 import uuid
