@@ -209,6 +209,7 @@ class DatasetDetailResponse(BaseModel):
     adapté du modèle DatasetInfo de data_api"""
     dataset_id: str
     original_filename: str
+    dataset_name: Optional[str] = None
     dataset_type: str
     upload_date: str
     rows_count: int
@@ -531,6 +532,7 @@ async def list_models(
 @app.post("/data/upload", description="Upload de données d'entraînement", tags=["Data"])
 async def upload_data(
     file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à traiter pour l'entraînement. Doit contenir les colonnes 'Avis' et 'Note'."),
+    dataset_name: Optional[str] = Form(None, description="Nom personnalisé pour le jeu de données"),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -538,6 +540,7 @@ async def upload_data(
     
     ## Paramètres de formulaire
     - **file**: Fichier CSV à uploader (obligatoire). Doit contenir les colonnes 'Avis' et 'Note'.
+    - **dataset_name**: (Optionnel) Nom personnalisé pour le jeu de données
     
     ## Retour
     - Informations sur le jeu de données traité et stocké
@@ -547,8 +550,13 @@ async def upload_data(
         file_content = await file.read()
         files = {"file": (file.filename, file_content)}
         
+        # Préparation des données de formulaire
+        data = {}
+        if dataset_name:
+            data["dataset_name"] = dataset_name
+        
         # Appel au service de données avec un timeout plus long
-        return call_service(f"{DATA_API_URL}/upload", method="POST", files=files, timeout=300)  # 5 minutes
+        return call_service(f"{DATA_API_URL}/upload", method="POST", files=files, data=data, timeout=300)  # 5 minutes
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (upload): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
@@ -556,6 +564,7 @@ async def upload_data(
 @app.post("/data/upload/validation", description="Upload de données de validation", tags=["Data"])
 async def upload_validation_data(
     file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à utiliser comme données de validation. Doit contenir les colonnes 'Avis' et 'Note'."),
+    dataset_name: Optional[str] = Form(None, description="Nom personnalisé pour le jeu de données de validation"),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -563,6 +572,7 @@ async def upload_validation_data(
     
     ## Paramètres de formulaire
     - **file**: Fichier CSV à uploader (obligatoire). Doit contenir les colonnes 'Avis' et 'Note'.
+    - **dataset_name**: (Optionnel) Nom personnalisé pour le jeu de données de validation
     
     ## Retour
     - Informations sur le jeu de données de validation traité et stocké
@@ -572,8 +582,13 @@ async def upload_validation_data(
         file_content = await file.read()
         files = {"file": (file.filename, file_content)}
         
+        # Préparation des données de formulaire
+        data = {}
+        if dataset_name:
+            data["dataset_name"] = dataset_name
+        
         # Appel au service de données avec un timeout plus long
-        return call_service(f"{DATA_API_URL}/upload/validation", method="POST", files=files, timeout=300)  # 5 minutes
+        return call_service(f"{DATA_API_URL}/upload/validation", method="POST", files=files, data=data, timeout=300)  # 5 minutes
     except Exception as e:
         logger.error(f"Erreur lors de l'appel au service de données (upload validation): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'appel au service de données: {str(e)}")
@@ -616,7 +631,8 @@ async def get_dataset(
         # Adapter le format de DatasetInfo à DatasetDetailResponse
         return {
             "dataset_id": dataset_info["id"],
-            "original_filename": dataset_info["name"],
+            "original_filename": dataset_info.get("original_filename", dataset_info["name"]),
+            "dataset_name": dataset_info.get("dataset_name"),
             "dataset_type": dataset_info["type"],
             "upload_date": dataset_info["created_at"],
             "rows_count": dataset_info["n_rows"],
@@ -669,6 +685,7 @@ async def balance_dataset(
     strategy: str = Form("hybrid", description="Stratégie d'équilibrage (undersample, oversample, hybrid)"),
     target_ratio: float = Form(0.5, description="Ratio cible pour la classe minoritaire (entre 0 et 1)"),
     random_seed: int = Form(42, description="Graine aléatoire pour la reproductibilité"),
+    dataset_name: Optional[str] = Form(None, description="Nom personnalisé pour le jeu de données équilibré"),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -685,6 +702,7 @@ async def balance_dataset(
       - *hybrid*: Approche hybride (recommandée) combinant les deux techniques
     - **target_ratio**: Ratio cible pour la classe minoritaire (0-1)
     - **random_seed**: Graine aléatoire pour la reproductibilité
+    - **dataset_name**: (Optionnel) Nom personnalisé pour le jeu de données équilibré
     
     ## Retour
     - Détails sur l'équilibrage réalisé et ID du nouveau jeu de données équilibré
@@ -697,6 +715,10 @@ async def balance_dataset(
             "target_ratio": target_ratio,
             "random_seed": random_seed
         }
+        
+        # Ajouter le nom du dataset s'il est fourni
+        if dataset_name:
+            data["dataset_name"] = dataset_name
         
         response = call_service(
             f"{DATA_API_URL}/datasets/balance",

@@ -123,6 +123,8 @@ class DatasetInfo(BaseModel):
     file_path: str = Field(..., title="Chemin du fichier")
     run_id: Optional[str] = Field(None, title="ID du run MLflow")
     stats: Optional[Dict[str, Any]] = Field(None, title="Statistiques")
+    original_filename: Optional[str] = Field(None, title="Nom du fichier original uploadé")
+    dataset_name: Optional[str] = Field(None, title="Nom personnalisé du jeu de données")
 
 class DatasetsResponse(BaseModel):
     """Liste des jeux de données disponibles"""
@@ -382,6 +384,10 @@ def get_dataset(dataset_id: str):
             except Exception as e:
                 logger.warning(f"Erreur lors de la lecture du fichier {file_name}: {str(e)}")
         
+        # Récupérer le nom de fichier original et le nom du dataset s'ils existent
+        original_filename = run.data.params.get("original_filename", None)
+        dataset_name = run.data.params.get("dataset_name", None)
+        
         # Créer l'objet dataset
         return DatasetInfo(
             id=dataset_id,
@@ -391,7 +397,9 @@ def get_dataset(dataset_id: str):
             n_rows=n_rows,
             file_path=file_path if os.path.exists(file_path) else data_path,
             run_id=dataset_id,
-            stats=run.data.metrics
+            stats=run.data.metrics,
+            original_filename=original_filename,
+            dataset_name=dataset_name
         )
     except HTTPException: 
         raise
@@ -648,6 +656,15 @@ async def balance_dataset_endpoint(request: BalanceRequest):
             # Enregistrer un nouveau run MLflow pour ce jeu de données équilibré
             experiment_id = client.get_experiment_by_name(INGESTION_EXPERIMENT_NAME).experiment_id
             
+            # Récupérer le nom de fichier original et le nom du dataset source
+            original_filename = run.data.params.get("original_filename", os.path.basename(data_path))
+            source_dataset_name = run.data.params.get("dataset_name", None)
+            
+            # Créer un nom pour le dataset équilibré basé sur le nom du dataset source
+            balanced_dataset_name = None
+            if source_dataset_name:
+                balanced_dataset_name = f"{source_dataset_name} (Équilibré - {request.strategy})"
+            
             # Utiliser mlflow.start_run au lieu de client.start_run
             with mlflow.start_run(experiment_id=experiment_id) as balanced_run:
                 # Enregistrer les paramètres
@@ -658,6 +675,9 @@ async def balance_dataset_endpoint(request: BalanceRequest):
                 mlflow.log_param("achieved_ratio", achieved_ratio)
                 mlflow.log_param("data_path", balanced_filepath)
                 mlflow.log_param("is_balanced_dataset", "true")
+                mlflow.log_param("original_filename", original_filename)
+                if balanced_dataset_name:
+                    mlflow.log_param("dataset_name", balanced_dataset_name)
                 
                 # Enregistrer les métriques
                 mlflow.log_metric("original_total", original_distribution['total'])
@@ -714,10 +734,16 @@ async def balance_dataset_endpoint(request: BalanceRequest):
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'équilibrage du jeu de données: {str(e)}")
 
 @app.post("/upload", response_model=IngestionResponse)
-async def upload_data(file: UploadFile = File(
-    ..., 
-    description="Fichier CSV contenant les avis clients à traiter pour l'entraînement. Doit inclure les colonnes 'Avis' et 'Note'."
-)):
+async def upload_data(
+    file: UploadFile = File(
+        ..., 
+        description="Fichier CSV contenant les avis clients à traiter pour l'entraînement. Doit inclure les colonnes 'Avis' et 'Note'."
+    ),
+    dataset_name: Optional[str] = Form(
+        None,
+        description="Nom personnalisé du jeu de données (optionnel)"
+    )
+):
     """
     Endpoint pour uploader et traiter un fichier CSV d'avis clients pour l'entraînement.
     
@@ -752,7 +778,9 @@ async def upload_data(file: UploadFile = File(
             pipeline = DataIngestionPipeline(
                 data_path=tmp_file.name,
                 experiment_name=INGESTION_EXPERIMENT_NAME,
-                is_validation_set=False
+                is_validation_set=False,
+                original_filename=file.filename,
+                dataset_name=dataset_name
             )
             
             # Mesure du temps de traitement
@@ -805,10 +833,16 @@ async def upload_data(file: UploadFile = File(
             os.unlink(tmp_file.name)
 
 @app.post("/upload/validation", response_model=IngestionResponse)
-async def upload_validation_data(file: UploadFile = File(
-    ..., 
-    description="Fichier CSV contenant les avis clients à utiliser comme données de validation. Doit inclure les colonnes 'Avis' et 'Note'."
-)):
+async def upload_validation_data(
+    file: UploadFile = File(
+        ..., 
+        description="Fichier CSV contenant les avis clients à utiliser comme données de validation. Doit inclure les colonnes 'Avis' et 'Note'."
+    ),
+    dataset_name: Optional[str] = Form(
+        None,
+        description="Nom personnalisé du jeu de données (optionnel)"
+    )
+):
     """
     Endpoint pour uploader et traiter un fichier CSV d'avis clients spécifiquement pour la validation des modèles.
     
@@ -844,7 +878,9 @@ async def upload_validation_data(file: UploadFile = File(
             pipeline = DataIngestionPipeline(
                 data_path=tmp_file.name,
                 experiment_name=INGESTION_EXPERIMENT_NAME,
-                is_validation_set=True
+                is_validation_set=True,
+                original_filename=file.filename,
+                dataset_name=dataset_name
             )
             
             # Mesure du temps de traitement
