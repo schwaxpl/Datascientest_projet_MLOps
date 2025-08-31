@@ -665,7 +665,10 @@ async def download_dataset(
 
 @app.post("/data/datasets/balance", response_model=BalanceResponse, description="Équilibre un jeu de données pour gérer le déséquilibre des classes", tags=["Data"])
 async def balance_dataset(
-    request: BalanceRequest,
+    dataset_id: str = Form(..., description="ID du jeu de données à équilibrer"),
+    strategy: str = Form("hybrid", description="Stratégie d'équilibrage (undersample, oversample, hybrid)"),
+    target_ratio: float = Form(0.5, description="Ratio cible pour la classe minoritaire (entre 0 et 1)"),
+    random_seed: int = Form(42, description="Graine aléatoire pour la reproductibilité"),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -674,14 +677,12 @@ async def balance_dataset(
     Permet d'améliorer l'entraînement des modèles en présence d'un déséquilibre important
     entre les avis positifs et négatifs (habituellement moins de 1% d'avis négatifs).
     
-    ## Options de stratégie d'équilibrage
-    - **undersample** : Sous-échantillonnage des avis positifs (classe majoritaire)
-    - **oversample** : Sur-échantillonnage des avis négatifs (classe minoritaire)
-    - **hybrid** : Approche hybride (recommandée) combinant les deux techniques
-    
-    ## Paramètres
+    ## Paramètres de formulaire
     - **dataset_id**: Identifiant unique du jeu de données à équilibrer
-    - **strategy**: Stratégie d'équilibrage à utiliser (undersample, oversample, hybrid)
+    - **strategy**: Stratégie d'équilibrage à utiliser:
+      - *undersample*: Sous-échantillonnage des avis positifs (classe majoritaire)
+      - *oversample*: Sur-échantillonnage des avis négatifs (classe minoritaire)
+      - *hybrid*: Approche hybride (recommandée) combinant les deux techniques
     - **target_ratio**: Ratio cible pour la classe minoritaire (0-1)
     - **random_seed**: Graine aléatoire pour la reproductibilité
     
@@ -690,10 +691,17 @@ async def balance_dataset(
     """
     try:
         # Appel au service data_api pour équilibrer le dataset
-        response = await call_service(
+        data = {
+            "dataset_id": dataset_id,
+            "strategy": strategy,
+            "target_ratio": target_ratio,
+            "random_seed": random_seed
+        }
+        
+        response = call_service(
             f"{DATA_API_URL}/datasets/balance",
             method="POST",
-            json=request.dict()
+            data=data
         )
         
         # Retourner le résultat de l'équilibrage
