@@ -433,7 +433,34 @@ def validate_model(model_name: Optional[str] = None, model_version: Optional[str
                     logger.info(f"[{validation_id}] Le modèle {model_info['name']} v{model_info['version']} "
                                f"a passé la validation (accuracy: {accuracy:.4f} >= {threshold})")
                     
-                    # Transition vers Production
+                    # Vérifier s'il existe un modèle en production du même nom
+                    prod_versions = [v for v in client.search_model_versions(f"name='{model_info['name']}'") 
+                                    if v.current_stage == "Production"]
+                    
+                    # Si un modèle en production existe, le déplacer vers le stage "None" et le marquer comme "archivé"
+                    if prod_versions:
+                        old_prod_version = prod_versions[0].version
+                        logger.info(f"[{validation_id}] Archivage du modèle précédent {model_info['name']} v{old_prod_version}")
+                        
+                        # Transition vers None (archivage du modèle précédent)
+                        client.transition_model_version_stage(
+                            name=model_info["name"],
+                            version=old_prod_version,
+                            stage="None",
+                            archive_existing_versions=False
+                        )
+                        
+                        # Mise à jour des tags
+                        client.set_model_version_tag(
+                            name=model_info["name"],
+                            version=old_prod_version,
+                            key="status",
+                            value="archived"
+                        )
+                        
+                        logger.info(f"[{validation_id}] Ancien modèle {model_info['name']} v{old_prod_version} archivé avec succès")
+                    
+                    # Transition vers Production pour le nouveau modèle
                     client.transition_model_version_stage(
                         name=model_info["name"],
                         version=model_info["version"],
@@ -464,6 +491,15 @@ def validate_model(model_name: Optional[str] = None, model_version: Optional[str
                     
                     mlflow.set_tag("validation_result", "approved")
                     result["action_taken"] = "promoted_to_production"
+                    
+                    # Ajouter des informations sur l'archivage de l'ancien modèle si c'est le cas
+                    if 'old_prod_version' in locals():
+                        result["archived_model"] = {
+                            "name": model_info["name"],
+                            "version": old_prod_version,
+                            "status": "archived"
+                        }
+                        mlflow.set_tag("archived_model_version", old_prod_version)
                     
                     logger.info(f"[{validation_id}] Modèle {model_info['name']} v{model_info['version']} "
                                f"promu en production")
