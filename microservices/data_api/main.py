@@ -7,10 +7,12 @@ import os
 import time
 import uuid
 import tempfile
+import shutil
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Query, Depends, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.background import BackgroundTask
 import io
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any
@@ -352,7 +354,8 @@ def get_dataset(dataset_id: str):
 def download_dataset(dataset_id: str):
     """
     Télécharge un jeu de données spécifique au format CSV.
-    Utilise l'ID du run MLflow pour identifier le dataset.
+    Utilise l'ID du run MLflow pour identifier le dataset et récupère toujours le fichier CSV
+    depuis le dossier data_processed des artifacts du run.
     """
     try:
         # Récupérer le run MLflow correspondant
@@ -370,58 +373,96 @@ def download_dataset(dataset_id: str):
         if experiment.name != INGESTION_EXPERIMENT_NAME:
             logger.warning(f"Le run {dataset_id} n'appartient pas à l'expérience d'ingestion")
             raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
-            
-        # Vérifier que le run contient un paramètre data_path
-        if "data_path" not in run.data.params:
-            logger.warning(f"Le run {dataset_id} ne contient pas de data_path")
-            raise HTTPException(status_code=404, detail=f"Jeu de données avec ID {dataset_id} non trouvé")
-            
-        # Extraire le chemin du fichier
-        data_path = run.data.params["data_path"]
-        file_name = os.path.basename(data_path)
         
-        # Chercher le fichier localement
-        processed_dir = "data/processed"
-        file_path = os.path.join(processed_dir, file_name)
+        # Extraire le nom de fichier depuis les paramètres du run
+        data_path = run.data.params.get("data_path", "")
+        file_name = os.path.basename(data_path) if data_path else f"dataset_{dataset_id}.csv"
         
-        if os.path.exists(file_path):
-            # Si le fichier existe localement, le retourner directement
-            return FileResponse(
-                path=file_path, 
-                filename=file_name, 
-                media_type="text/csv"
-            )
-        
-        # Si le fichier n'existe pas localement, essayer de le récupérer depuis MLflow
         # Récupérer l'artifact depuis MLflow
-        import pandas as pd
-        import tempfile
-        
-        # On essaie d'abord de lire depuis data_path si c'est un chemin accessible
-        if os.path.exists(data_path):
-            return FileResponse(
-                path=data_path,
-                filename=file_name,
-                media_type="text/csv"
-            )
-                
-        # Sinon, on cherche l'artifact dans MLflow
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp:
-                tmp_path = tmp.name
-                
-            # Essayer de télécharger l'artifact depuis MLflow
-            client.download_artifacts(run_id=dataset_id, path=os.path.basename(data_path), dst_path=os.path.dirname(tmp_path))
-            downloaded_path = os.path.join(os.path.dirname(tmp_path), os.path.basename(data_path))
+            import tempfile
             
-            if os.path.exists(downloaded_path):
+            # Créer un répertoire temporaire pour stocker les artifacts
+            temp_dir = tempfile.mkdtemp()
+            logger.info(f"Téléchargement des artifacts depuis MLflow run {dataset_id}")
+            
+            # Lister les artifacts du run
+            artifacts = client.list_artifacts(run_id=dataset_id)
+            
+            # Rechercher d'abord dans le dossier data_processed
+            data_processed_path = None
+            for artifact in artifacts:
+                if artifact.is_dir and artifact.path == "data_processed":
+                    data_processed_path = artifact.path
+                    break
+            
+            # Si on trouve le dossier data_processed, chercher un fichier CSV dedans
+            if data_processed_path:
+                data_processed_artifacts = client.list_artifacts(run_id=dataset_id, path=data_processed_path)
+                csv_artifacts = [a for a in data_processed_artifacts if a.path.endswith('.csv')]
+                
+                if csv_artifacts:
+                    # Prendre le premier fichier CSV trouvé (ou le seul)
+                    csv_path = csv_artifacts[0].path
+                    file_name = os.path.basename(csv_path)
+                    
+                    logger.info(f"Fichier CSV trouvé dans data_processed: {csv_path}")
+                    
+                    # Télécharger le fichier
+                    client.download_artifacts(run_id=dataset_id, path=csv_path, dst_path=temp_dir)
+                    downloaded_path = os.path.join(temp_dir, os.path.basename(csv_path))
+                    
+                    return FileResponse(
+                        path=downloaded_path,
+                        filename=file_name,
+                        media_type="text/csv",
+                        background=BackgroundTask(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+                    )
+            
+            # Si on n'a pas trouvé de CSV dans data_processed, chercher dans tous les artifacts
+            csv_artifacts = []
+            for artifact in artifacts:
+                if not artifact.is_dir and artifact.path.endswith('.csv'):
+                    csv_artifacts.append(artifact)
+            
+            if csv_artifacts:
+                csv_path = csv_artifacts[0].path
+                file_name = os.path.basename(csv_path)
+                
+                logger.info(f"Fichier CSV trouvé dans les artifacts: {csv_path}")
+                
+                # Télécharger le fichier
+                client.download_artifacts(run_id=dataset_id, path=csv_path, dst_path=temp_dir)
+                downloaded_path = os.path.join(temp_dir, os.path.basename(csv_path))
+                
                 return FileResponse(
                     path=downloaded_path,
                     filename=file_name,
-                    media_type="text/csv"
+                    media_type="text/csv",
+                    background=BackgroundTask(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
                 )
+            
+            # Si on n'a toujours pas trouvé de CSV, essayer avec le data_path
+            if data_path:
+                artifact_path = os.path.basename(data_path)
                 
-            raise HTTPException(status_code=404, detail="Fichier introuvable dans MLflow")
+                logger.info(f"Tentative de téléchargement avec data_path: {artifact_path}")
+                
+                # Télécharger le fichier
+                client.download_artifacts(run_id=dataset_id, path=artifact_path, dst_path=temp_dir)
+                downloaded_path = os.path.join(temp_dir, os.path.basename(artifact_path))
+                
+                if os.path.exists(downloaded_path):
+                    return FileResponse(
+                        path=downloaded_path,
+                        filename=file_name,
+                        media_type="text/csv",
+                        background=BackgroundTask(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+                    )
+            
+            # Si on n'a toujours rien trouvé
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise HTTPException(status_code=404, detail="Fichier CSV introuvable dans les artifacts MLflow")
             
         except Exception as e:
             logger.error(f"Erreur lors de la récupération du fichier depuis MLflow: {str(e)}")

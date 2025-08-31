@@ -330,7 +330,7 @@ async def api_docs():
 
 @app.post("/predict", response_model=PredictResponse, description="Prédit le sentiment d'un texte", tags=["Prediction"])
 async def predict(
-    text: str = Form(..., description="Le texte dont on veut prédire le sentiment"),
+    text: str = Form("Cet article est très bien, je le recommande vivement !", description="Le texte dont on veut prédire le sentiment"),
     model_name: Optional[str] = Form(None, description="Le nom du modèle à utiliser (optionnel)"),
     current_user = Depends(get_current_active_user)
 ):
@@ -466,7 +466,7 @@ async def list_models(
 
 @app.post("/data/upload", description="Upload de données d'entraînement", tags=["Data"])
 async def upload_data(
-    file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à traiter pour l'entraînement"),
+    file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à traiter pour l'entraînement. Doit contenir les colonnes 'Avis' et 'Note'."),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -491,7 +491,7 @@ async def upload_data(
 
 @app.post("/data/upload/validation", description="Upload de données de validation", tags=["Data"])
 async def upload_validation_data(
-    file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à utiliser comme données de validation"),
+    file: UploadFile = File(..., description="Fichier CSV contenant les avis clients à utiliser comme données de validation. Doit contenir les colonnes 'Avis' et 'Note'."),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -533,7 +533,7 @@ async def list_datasets(
 
 @app.get("/data/datasets/{dataset_id}", response_model=DatasetDetailResponse, description="Obtient les détails d'un jeu de données", tags=["Data"])
 async def get_dataset(
-    dataset_id: str = Path(..., title="ID du jeu de données", description="Identifiant unique du jeu de données", example="processed_data_20250721_001436.csv"),
+    dataset_id: str = Path(..., title="ID du jeu de données", description="Identifiant unique du jeu de données", example="ab1cd2ef3gh4ij5kl6m"),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -566,7 +566,7 @@ async def get_dataset(
         
 @app.get("/data/datasets/{dataset_id}/download", description="Télécharge un jeu de données au format CSV", tags=["Data"])
 async def download_dataset(
-    dataset_id: str = Path(..., title="ID du jeu de données", description="Identifiant unique du jeu de données"),
+    dataset_id: str = Path(..., title="ID du jeu de données", description="Identifiant unique du jeu de données", example="ab1cd2ef3gh4ij5kl6m"),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -603,8 +603,8 @@ async def download_dataset(
 
 @app.post("/train", response_model=TrainResponse, description="Entraîne un nouveau modèle", tags=["Training"])
 async def train_model(
-    run_id: Optional[str] = Form(None, description="ID du run MLflow contenant les données d'entraînement (optionnel)"),
-    model_name: Optional[str] = Form(None, description="Nom à donner au modèle entraîné (optionnel)"),
+    run_id: Optional[str] = Form(None, description="ID du run MLflow contenant les données d'entraînement (optionnel)", example="ab1cd2ef3gh4ij5kl6m"),
+    model_name: Optional[str] = Form("dst_trustpilot", description="Nom à donner au modèle entraîné (optionnel)"),
     base_model_name: Optional[str] = Form(None, description="Nom du modèle à utiliser comme base (optionnel)"),
     base_model_version: Optional[str] = Form(None, description="Version du modèle de base à utiliser (optionnel)"),
     current_user = Depends(get_current_active_user)
@@ -644,10 +644,10 @@ async def train_model(
 
 @app.post("/validate", response_model=ValidateResponse, description="Valide un modèle existant", tags=["Training"])
 async def validate_model(
-    model_name: Optional[str] = Form(None, description="Nom du modèle à valider"),
-    model_version: Optional[str] = Form(None, description="Version du modèle à valider"),
+    model_name: str = Form("dst_trustpilot", description="Nom du modèle à valider"),
+    model_version: str = Form("1", description="Version du modèle à valider"),
     auto_approve: bool = Form(False, description="Approuver le modèle automatiquement si la validation est réussie"),
-    threshold: Optional[float] = Form(None, description="Seuil d'accuracy pour considérer le modèle comme validé"),
+    threshold: Optional[float] = Form(0.75, description="Seuil d'accuracy pour considérer le modèle comme validé"),
     current_user = Depends(get_current_active_user)
 ):
     """
@@ -683,8 +683,8 @@ async def validate_model(
 
 @app.post("/promote/{model_name}/{version}", description="Promeut un modèle en production", tags=["Training"])
 async def promote_model(
-    model_name: str = Path(..., title="Nom du modèle", description="Nom du modèle à promouvoir"),
-    version: str = Path(..., title="Version du modèle", description="Version du modèle à promouvoir"),
+    model_name: str = Path(..., title="Nom du modèle", description="Nom du modèle à promouvoir", example="dst_trustpilot"),
+    version: str = Path(..., title="Version du modèle", description="Version du modèle à promouvoir", example="1"),
     current_user = Depends(get_current_active_user)
 ):
     """
