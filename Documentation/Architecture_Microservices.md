@@ -1,10 +1,14 @@
 # Architecture Microservices MLOps
 
-Ce projet est une refonte du projet MLOps initial en utilisant une architecture microservices.
+## Vue d'Ensemble
 
-## Structure de l'Architecture
+Le projet MLOps implémente une architecture microservices pour l'analyse de sentiments sur les avis clients TrustPilot. Cette architecture permet une scalabilité, une maintenabilité et un déploiement indépendant optimaux.
 
-L'architecture se compose des éléments suivants :
+## Composants de l'Architecture
+
+L'architecture est composée des services suivants :
+
+> 📖 **Navigation** : [← Retour à l'index](INDEX.md) | [Voir les APIs →](API_Reference.md)
 
 1. **API Passerelle (Gateway)**
    - Point d'entrée unique pour tous les clients
@@ -134,6 +138,8 @@ Le cycle de vie MLOps reste identique à celui du projet initial :
 
 ## Principaux Endpoints
 
+> 📖 **Référence complète** : Consultez l'[API Reference](API_Reference.md) pour tous les endpoints avec exemples d'utilisation
+
 ### API Passerelle
 
 - `/token` : Obtention d'un token JWT
@@ -170,4 +176,15 @@ Les variables d'environnement principales :
 - `USER_USERNAME`, `USER_PASSWORD` : Identifiants utilisateur standard
 - `MLFLOW_TRACKING_URI` : URL du serveur MLflow
 - `MLFLOW_S3_ENDPOINT_URL` : URL du serveur MinIO/S3
+
+## 🔗 Voir Aussi
+
+- **[API Reference](API_Reference.md)** - Documentation complète des endpoints avec exemples
+- **[Docker Hub Deployment](Docker_Hub_Deployment.md)** - Déploiement avec images pré-construites
+- **[Docker Volumes Structure](Docker_Volumes_Structure.md)** - Organisation du stockage persistant
+- **[← Retour à l'index](INDEX.md)** - Vue d'ensemble de la documentation
+
+---
+
+*Architecture technique du système MLOps - Analyse de Sentiments*
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` : Identifiants S3/MinIO

@@ -1,6 +1,8 @@
 # MLOps Microservices - Docker Hub Images
 
-Ce projet utilise désormais des images Docker pré-construites depuis Docker Hub pour ses microservices.
+Le projet MLOps fournit des images Docker pré-construites sur Docker Hub pour un déploiement simplifié.
+
+> 📖 **Navigation** : [← Retour à l'index](INDEX.md) | [Voir l'architecture →](Architecture_Microservices.md)
 
 ## Architecture des Images
 
@@ -77,3 +79,14 @@ Si vous rencontrez des erreurs du type `python: can't open file '/app/microservi
 ## Intégration Continue
 
 Les images sont construites et publiées automatiquement sur Docker Hub via GitHub Actions à chaque push sur la branche `main` ou lors de la création d'un tag `v*`.
+
+## 🔗 Voir Aussi
+
+- **[Architecture Microservices](Architecture_Microservices.md)** - Détails de l'architecture système
+- **[API Reference](API_Reference.md)** - Documentation des endpoints
+- **[Docker Volumes Structure](Docker_Volumes_Structure.md)** - Gestion du stockage persistant
+- **[← Retour à l'index](INDEX.md)** - Vue d'ensemble de la documentation
+
+---
+
+*Guide de déploiement Docker Hub - Système MLOps*
