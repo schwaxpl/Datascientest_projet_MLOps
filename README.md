@@ -1,5 +1,10 @@
 # Projet MLOps Datascientest - Analyse de Sentiments
 
+![Tests Status](https://github.com/schwaxpl/Datascientest_projet_MLOps/workflows/Docker%20Build%20and%20Push%20Microservices/badge.svg)
+![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Docker](https://img.shields.io/badge/docker-enabled-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+
 **Projet de fin d'étude MLOps réalisé par Camille Hamel pour Datascientest**
 
 ## 📋 Table des Matières
