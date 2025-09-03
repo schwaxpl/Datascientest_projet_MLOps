@@ -7,17 +7,25 @@ This DAG:
 3. Validates the newly trained model
 4. Runs every minute to ensure rapid response to new data
 
-The DAG checks for new datasets in MLflow artifacts and processes them automatically,
+The DAG checks for new datasets in MLflow artifacts        # Make the POST request to validate the model
+        print(f"Sending validation request to {TRAINING_ENDPOINT}/validate")
+        response = requests.post(
+            f"{TRAINING_ENDPOINT}/validate",
+            headers=headers,
+            json=validation_request
+        )ocesses them automatically,
 enabling a fully automated ML pipeline triggered by data uploads.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 import json
 import requests
 import pandas as pd
 import mlflow
 from mlflow.tracking import MlflowClient
+import boto3
+from botocore.config import Config
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
@@ -49,9 +57,51 @@ try:
 except KeyError:
     GATEWAY_API_URL = "http://gateway-api:8000"
 
+def configure_s3_for_mlflow():
+    """Configure S3/MinIO credentials for MLflow artifact access"""
+    try:
+        # S'assurer que les variables d'environnement sont définies
+        aws_access_key = os.environ.get("AWS_ACCESS_KEY_ID", "minioadmin")
+        aws_secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "minioadmin")
+        s3_endpoint = os.environ.get("MLFLOW_S3_ENDPOINT_URL", "http://minio:9000")
+        
+        # Configurer explicitly les variables d'environnement pour boto3
+        os.environ["AWS_ACCESS_KEY_ID"] = aws_access_key
+        os.environ["AWS_SECRET_ACCESS_KEY"] = aws_secret_key
+        os.environ["MLFLOW_S3_ENDPOINT_URL"] = s3_endpoint
+        
+        # Tester la connexion S3
+        try:
+            import boto3
+            from botocore.config import Config
+            
+            s3_client = boto3.client(
+                's3',
+                endpoint_url=s3_endpoint,
+                aws_access_key_id=aws_access_key,
+                aws_secret_access_key=aws_secret_key,
+                config=Config(signature_version='s3v4'),
+                region_name='us-east-1'
+            )
+            
+            # Test simple pour vérifier la connectivité
+            s3_client.list_buckets()
+            print(f"✅ S3 connection successful to {s3_endpoint}")
+            return True
+            
+        except Exception as s3_error:
+            print(f"⚠️ S3 connection test failed: {str(s3_error)}")
+            print("Will proceed anyway - MLflow might still work")
+            return False
+            
+    except Exception as e:
+        print(f"Error configuring S3 for MLflow: {str(e)}")
+        return False
+
 # All API endpoints are accessed through the Gateway
 DATA_API_URL = f"{GATEWAY_API_URL}/data"
-TRAINING_API_URL = f"{GATEWAY_API_URL}/training"
+# Les endpoints de training sont directement sur la gateway, pas avec /training/ prefix
+TRAINING_ENDPOINT = GATEWAY_API_URL  # Pas de prefix /training car les endpoints sont à la racine
 PREDICTION_API_URL = f"{GATEWAY_API_URL}/prediction"
 
 # Define credentials - should be stored in Airflow connections
@@ -105,16 +155,22 @@ def check_new_datasets(**context):
     Vérifie s'il y a de nouveaux datasets uploadés dans MLflow dans la dernière minute
     """
     try:
+        # Configurer les credentials S3 pour MLflow
+        s3_configured = configure_s3_for_mlflow()
+        
         # Configurer MLflow
         mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
         client = MlflowClient()
         
-        # Calculer le timestamp d'il y a une minute
-        one_minute_ago = datetime.now() - timedelta(minutes=1)
-        timestamp_ms = int(one_minute_ago.timestamp() * 1000)
+        # Calculer le timestamp d'il y a une minute EN UTC (MLflow utilise UTC)
+        one_minute_ago_utc = datetime.now(timezone.utc) - timedelta(minutes=1)
+        timestamp_ms = int(one_minute_ago_utc.timestamp() * 1000)
         
-        print(f"Checking for new datasets since: {one_minute_ago}")
+        print(f"Checking for new datasets since: {one_minute_ago_utc} UTC")
+        print(f"Timestamp (ms): {timestamp_ms}")
         print(f"MLflow URI: {MLFLOW_TRACKING_URI}")
+        print(f"S3 Endpoint: {os.environ.get('MLFLOW_S3_ENDPOINT_URL')}")
+        print(f"S3 Configuration: {'✅ OK' if s3_configured else '⚠️ Warning'}")
         
         # Chercher les expériences récentes
         try:
@@ -146,22 +202,26 @@ def check_new_datasets(**context):
                         continue
                     
                     for artifact in artifacts:
-                        # Chercher les fichiers CSV ou datasets
-                        if (artifact.path.endswith('.csv') or 
-                            'dataset' in artifact.path.lower() or
-                            'data' in artifact.path.lower()):
+                        # Chercher uniquement les données prêtes pour l'entraînement (data_processed)
+                        # Ignorer data_input qui contient les données brutes
+                        if (artifact.path == 'data_processed' or
+                            artifact.path.startswith('data_processed/') or
+                            (artifact.path.endswith('.csv') and 'processed' in artifact.path.lower())):
                             
                             dataset_info = {
                                 "run_id": run.info.run_id,
                                 "experiment_id": experiment.experiment_id,
                                 "experiment_name": experiment.name,
                                 "artifact_path": artifact.path,
-                                "start_time": datetime.fromtimestamp(run.info.start_time / 1000),
+                                "start_time": datetime.fromtimestamp(run.info.start_time / 1000, tz=timezone.utc),
                                 "run_name": run.data.tags.get("mlflow.runName", f"run_{run.info.run_id[:8]}")
                             }
                             
                             new_datasets.append(dataset_info)
-                            print(f"Found new dataset: {artifact.path} in run {run.info.run_id}")
+                            print(f"Found new processed dataset: {artifact.path} in run {run.info.run_id}")
+                        else:
+                            # Log les artifacts ignorés pour debug
+                            print(f"Skipping artifact (not processed data): {artifact.path} in run {run.info.run_id}")
             
             except Exception as e:
                 print(f"Error checking experiment {experiment.name}: {str(e)}")
@@ -227,9 +287,9 @@ def train_model_from_mlflow(**context):
         }
         
         # Make the POST request to train the model through the Gateway API
-        print(f"Sending training request to {TRAINING_API_URL}/train")
+        print(f"Sending training request to {TRAINING_ENDPOINT}/train")
         response = requests.post(
-            f"{TRAINING_API_URL}/train",
+            f"{TRAINING_ENDPOINT}/train",
             headers=headers,
             json=training_request
         )
@@ -241,9 +301,14 @@ def train_model_from_mlflow(**context):
         result = response.json()
         print(f"Model trained successfully. Model: {result.get('model_name')} v{result.get('model_version')}")
         
-        # Store model info in XCom for the next task
-        context['ti'].xcom_push(key='model_name', value=result.get('model_name'))
-        context['ti'].xcom_push(key='model_version', value=result.get('model_version'))
+        # Store model info in XCom for the next task - avec logging pour debug
+        model_name = result.get('model_name')
+        model_version = result.get('model_version')
+        
+        print(f"📝 Storing in XCom: model_name='{model_name}', model_version='{model_version}'")
+        
+        context['ti'].xcom_push(key='model_name', value=model_name)
+        context['ti'].xcom_push(key='model_version', value=model_version)
         context['ti'].xcom_push(key='metrics', value=result.get('metrics'))
         context['ti'].xcom_push(key='mlflow_source_run_id', value=mlflow_run_id)
         
@@ -252,11 +317,6 @@ def train_model_from_mlflow(**context):
     except Exception as e:
         print(f"Error training model: {str(e)}")
         raise
-        context['ti'].xcom_push(key='model_name', value=result.get('model_name'))
-        context['ti'].xcom_push(key='model_version', value=result.get('model_version'))
-        context['ti'].xcom_push(key='metrics', value=result.get('metrics'))
-        
-        return result
     
     except Exception as e:
         print(f"Error training model: {str(e)}")
@@ -278,12 +338,19 @@ def validate_model(**context):
     model_name = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_name')
     model_version = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_version')
     
-    if not model_name or not model_version:
-        error_msg = "No model_name or model_version available from training task"
-        print(error_msg)
+    print(f"🔍 Retrieved from XCom: model_name='{model_name}', model_version='{model_version}'")
+    
+    if not model_name:
+        error_msg = "No model_name available from training task"
+        print(f"❌ {error_msg}")
+        raise ValueError(error_msg)
+        
+    if not model_version:
+        error_msg = f"No model_version available from training task for model '{model_name}'"
+        print(f"❌ {error_msg}")
         raise ValueError(error_msg)
     
-    print(f"Validating model: {model_name} v{model_version}")
+    print(f"✅ Validating model: {model_name} v{model_version}")
     
     try:
         # Get authentication headers with token
@@ -297,10 +364,12 @@ def validate_model(**context):
             "auto_approve": auto_approve
         }
         
+        print(f"📋 Validation request: {json.dumps(validation_request, indent=2)}")
+        
         # Make the POST request to validate the model through the Gateway API
-        print(f"Sending validation request to {TRAINING_API_URL}/validate")
+        print(f"Sending validation request to {TRAINING_ENDPOINT}/validate")
         response = requests.post(
-            f"{TRAINING_API_URL}/validate",
+            f"{TRAINING_ENDPOINT}/validate",
             headers=headers,
             json=validation_request
         )

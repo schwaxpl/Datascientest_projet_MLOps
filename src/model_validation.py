@@ -54,13 +54,26 @@ def get_models_to_validate(client: MlflowClient, model_name: Optional[str] = Non
     models_to_validate = []
     
     for name in model_names:
-        # Recherche des versions en staging avec le tag "status"="à valider"
+        # Recherche des versions avec le tag "status"="à valider"
+        # Compatible avec les anciens stages ET les nouveaux alias
         versions = client.search_model_versions(f"name='{name}'")
         for version in versions:
-            if version.current_stage == "Staging":
-                # Récupérer les tags pour vérifier si le modèle est en attente de validation
-                tags = client.get_model_version_tags(name, version.version)
-                if "status" in tags and tags["status"] == "à valider":
+            # Vérifier les tags pour voir si le modèle est en attente de validation
+            tags = client.get_model_version_tags(name, version.version)
+            if "status" in tags and tags["status"] == "à valider":
+                # Vérifier si le modèle est en staging (ancien système) OU a l'alias staging (nouveau système)
+                is_staging_stage = version.current_stage == "Staging"
+                
+                # Vérifier l'alias staging (nouveau système MLflow)
+                is_staging_alias = False
+                try:
+                    aliases = client.get_model_version_by_alias(name, "staging")
+                    is_staging_alias = (aliases.version == version.version)
+                except Exception:
+                    # L'alias n'existe pas ou erreur d'accès
+                    is_staging_alias = False
+                
+                if is_staging_stage or is_staging_alias:
                     logger.info(f"[{validation_id}] Modèle trouvé pour validation: {name} version {version.version}")
                     models_to_validate.append({
                         "name": name,
@@ -68,6 +81,8 @@ def get_models_to_validate(client: MlflowClient, model_name: Optional[str] = Non
                         "run_id": version.run_id,
                         "timestamp": version.creation_timestamp
                     })
+                else:
+                    logger.debug(f"[{validation_id}] Modèle {name} v{version.version} a le tag 'à valider' mais n'est ni en stage Staging ni avec alias staging")
     
     logger.info(f"[{validation_id}] {len(models_to_validate)} modèles trouvés en attente de validation")
     return models_to_validate
@@ -225,13 +240,21 @@ def validate_model(model_name: Optional[str] = None, model_version: Optional[str
     
     # Si un modèle et une version spécifiques sont demandés
     if model_name and model_version:
-        models_to_validate = [{
-            "name": model_name,
-            "version": model_version,
-            "run_id": client.get_model_version(model_name, model_version).run_id,
-            "timestamp": client.get_model_version(model_name, model_version).creation_timestamp
-        }]
+        logger.info(f"[{validation_id}] Validation spécifique demandée: {model_name} v{model_version}")
+        try:
+            model_version_info = client.get_model_version(model_name, model_version)
+            models_to_validate = [{
+                "name": model_name,
+                "version": model_version,
+                "run_id": model_version_info.run_id,
+                "timestamp": model_version_info.creation_timestamp
+            }]
+            logger.info(f"[{validation_id}] Modèle spécifique trouvé: {model_name} v{model_version}, run_id: {model_version_info.run_id}")
+        except Exception as e:
+            logger.error(f"[{validation_id}] Erreur lors de la récupération du modèle {model_name} v{model_version}: {str(e)}")
+            return {"status": "error", "message": f"Modèle {model_name} version {model_version} non trouvé"}
     else:
+        logger.info(f"[{validation_id}] Validation générale - recherche des modèles en attente")
         models_to_validate = get_models_to_validate(client, model_name)
     
     if not models_to_validate:
