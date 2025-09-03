@@ -114,9 +114,18 @@ def check_new_datasets(**context):
         timestamp_ms = int(one_minute_ago.timestamp() * 1000)
         
         print(f"Checking for new datasets since: {one_minute_ago}")
+        print(f"MLflow URI: {MLFLOW_TRACKING_URI}")
         
         # Chercher les expériences récentes
-        experiments = client.search_experiments()
+        try:
+            experiments = client.search_experiments()
+            print(f"Found {len(experiments)} experiments to check")
+        except Exception as e:
+            print(f"Error accessing MLflow experiments: {str(e)}")
+            print("MLflow server may not be accessible")
+            context['ti'].xcom_push(key='has_new_data', value=False)
+            return False
+            
         new_datasets = []
         
         for experiment in experiments:
@@ -130,7 +139,11 @@ def check_new_datasets(**context):
                 
                 for run in runs:
                     # Vérifier s'il y a des artifacts de type dataset
-                    artifacts = client.list_artifacts(run.info.run_id)
+                    try:
+                        artifacts = client.list_artifacts(run.info.run_id)
+                    except Exception as artifact_error:
+                        print(f"Error accessing artifacts for run {run.info.run_id}: {str(artifact_error)}")
+                        continue
                     
                     for artifact in artifacts:
                         # Chercher les fichiers CSV ou datasets
