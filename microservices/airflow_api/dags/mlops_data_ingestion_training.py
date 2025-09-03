@@ -335,10 +335,25 @@ def validate_model(**context):
         return None
     
     # Get the model name and version from the training task
+    print("🔍 Récupération des informations depuis XCom...")
+    
+    # Debug : lister toutes les clés XCom disponibles
+    try:
+        all_xcom = context['ti'].xcom_pull(task_ids='train_model_from_mlflow')
+        print(f"🔍 Toutes les données XCom de train_model_from_mlflow: {all_xcom}")
+    except Exception as e:
+        print(f"⚠️ Erreur lors de la récupération de toutes les données XCom: {str(e)}")
+    
     model_name = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_name')
     model_version = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_version')
     
     print(f"🔍 Retrieved from XCom: model_name='{model_name}', model_version='{model_version}'")
+    print(f"🔍 Type model_version: {type(model_version)}")
+    
+    # Vérifier si c'est un entier et le convertir en string si nécessaire
+    if isinstance(model_version, int):
+        model_version = str(model_version)
+        print(f"🔧 Converted model_version to string: '{model_version}'")
     
     if not model_name:
         error_msg = "No model_name available from training task"

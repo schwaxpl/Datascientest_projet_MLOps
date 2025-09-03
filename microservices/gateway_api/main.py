@@ -790,16 +790,17 @@ async def train_model(
 
 @app.post("/validate", response_model=ValidateResponse, description="Valide un modèle existant", tags=["Training"])
 async def validate_model(
-    model_name: str = Form("dst_trustpilot", description="Nom du modèle à valider"),
-    model_version: str = Form("1", description="Version du modèle à valider"),
-    auto_approve: bool = Form(False, description="Approuver le modèle automatiquement si la validation est réussie"),
-    threshold: Optional[float] = Form(0.75, description="Seuil d'accuracy pour considérer le modèle comme validé"),
+    request: Request,
+    model_name: Optional[str] = Form(None),
+    model_version: Optional[str] = Form(None),
+    auto_approve: Optional[bool] = Form(None),
+    threshold: Optional[float] = Form(None),
     current_user = Depends(get_current_active_user)
 ):
     """
     Valide un modèle existant sur le jeu de données de validation.
     
-    ## Paramètres de formulaire
+    ## Paramètres (JSON ou Form)
     - **model_name**: (Optionnel) Nom du modèle à valider. Si non fourni, tous les modèles en attente seront validés.
     - **model_version**: (Optionnel) Version du modèle à valider. Requis si model_name est spécifié.
     - **auto_approve**: Approuver automatiquement le modèle si la validation est réussie (défaut: False)
@@ -809,18 +810,43 @@ async def validate_model(
     - Métriques de validation et statut de validation du modèle
     """
     try:
-        data = {
-            "auto_approve": auto_approve
-        }
+        # Gérer les requêtes JSON (depuis Airflow) ET les formulaires (depuis l'interface web)
+        content_type = request.headers.get('content-type', '')
         
-        if model_name:
-            data["model_name"] = model_name
+        if 'application/json' in content_type:
+            # Requête JSON depuis API (Airflow)
+            json_data = await request.json()
+            data = {
+                "auto_approve": json_data.get("auto_approve", False)
+            }
             
-        if model_version:
-            data["model_version"] = model_version
+            if json_data.get("model_name"):
+                data["model_name"] = json_data.get("model_name")
+                
+            if json_data.get("model_version"):
+                data["model_version"] = json_data.get("model_version")
+                
+            if json_data.get("threshold") is not None:
+                data["threshold"] = json_data.get("threshold")
+                
+            logger.info(f"Validation JSON request: {json_data}")
+        else:
+            # Requête formulaire depuis l'interface web
+            data = {
+                "auto_approve": auto_approve if auto_approve is not None else False
+            }
             
-        if threshold is not None:
-            data["threshold"] = threshold
+            if model_name:
+                data["model_name"] = model_name
+                
+            if model_version:
+                data["model_version"] = model_version
+                
+            if threshold is not None:
+                data["threshold"] = threshold
+                
+            logger.info(f"Validation form request: model_name={model_name}, model_version={model_version}")
+        
         # Timeout augmenté pour permettre à la validation de se terminer
         return call_service(f"{TRAINING_API_URL}/validate", method="POST", data=data, timeout=300)  # 5 minutes
     except Exception as e:
