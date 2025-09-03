@@ -1,13 +1,11 @@
 """
 MLOps Health Check DAG
 
-Ce DAG effectue des vérifications périodiques de la santé des différentes API 
-de l'architecture MLOps:
+Ce DAG effectue des vérifications périodiques de la santé des services
+d'infrastructure de l'architecture MLOps:
 - Gateway API
-- Data API
-- Training API
-- Prediction API
 - MLflow
+- MinIO (via Gateway)
 
 Il enregistre les métriques et envoie des alertes en cas de problème.
 """
@@ -39,13 +37,11 @@ try:
 except KeyError:
     GATEWAY_API_URL = "http://gateway-api:8000"
 
-# Endpoints de santé pour chaque service
+# Endpoints de santé pour les services d'infrastructure
 HEALTH_ENDPOINTS = {
     "gateway": f"{GATEWAY_API_URL}/health",
-    "data": f"{GATEWAY_API_URL}/data/health",
-    "training": f"{GATEWAY_API_URL}/training/health",
-    "prediction": f"{GATEWAY_API_URL}/prediction/health",
-    "mlflow": "http://mlflow:5000/health"
+    "mlflow": "http://mlflow:5000/health",
+    "minio": f"{GATEWAY_API_URL}/health"  # Via Gateway pour check global
 }
 
 # Temps maximal de réponse acceptable (secondes)
@@ -102,7 +98,7 @@ def get_auth_headers():
 
 def check_api_health(**context):
     """
-    Vérifier la santé de toutes les API
+    Vérifier la santé des services d'infrastructure
     """
     headers = get_auth_headers()
     results = {}
@@ -111,7 +107,7 @@ def check_api_health(**context):
         try:
             start_time = datetime.now()
             
-            # Certaines API ne nécessitent pas d'authentification
+            # MLflow ne nécessite pas d'authentification
             current_headers = headers if service_name != "mlflow" else {}
             
             response = requests.get(
@@ -179,7 +175,7 @@ def check_api_health(**context):
 
 def send_alerts(**context):
     """
-    Envoyer des alertes si des services sont en mauvaise santé
+    Envoyer des alertes si des services d'infrastructure sont en mauvaise santé
     """
     results = context['ti'].xcom_pull(key='health_check_results', task_ids='check_api_health')
     
@@ -256,11 +252,11 @@ def log_metrics(**context):
 dag = DAG(
     'mlops_health_check',
     default_args=default_args,
-    description='Monitor the health of MLOps APIs',
+    description='Monitor the health of MLOps infrastructure services',
     schedule_interval=timedelta(minutes=15),  # Exécuter toutes les 15 minutes
     start_date=days_ago(1),
     catchup=False,
-    tags=['mlops', 'monitoring'],
+    tags=['mlops', 'monitoring', 'infrastructure'],
 )
 
 check_health_task = PythonOperator(

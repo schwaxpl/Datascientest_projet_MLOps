@@ -1,11 +1,14 @@
 """
-MLOps Data Ingestion and Training DAG
+MLOps Automated Data Ingestion and Training DAG
 
 This DAG:
-1. Uploads a CSV file to the Data API for processing
-2. Retrieves the run_id from the data upload response
-3. Uses the run_id to trigger model training via the Training API
-4. Validates the newly trained model
+1. Monitors MLflow for new datasets uploaded in the last minute
+2. Automatically triggers model training if new data is detected
+3. Validates the newly trained model
+4. Runs every minute to ensure rapid response to new data
+
+The DAG checks for new datasets in MLflow artifacts and processes them automatically,
+enabling a fully automated ML pipeline triggered by data uploads.
 """
 
 from datetime import datetime, timedelta
@@ -13,28 +16,39 @@ import os
 import json
 import requests
 import pandas as pd
+import mlflow
+from mlflow.tracking import MlflowClient
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.models import Variable
 from airflow.hooks.base import BaseHook
 from airflow.utils.dates import days_ago
+from airflow.sensors.base import BaseSensorOperator
+from airflow.utils.decorators import apply_defaults
 
-# Default settings
+# Default settings for the automated DAG
 default_args = {
-    'owner': 'airflow',
+    'owner': 'mlops_automation',
     'depends_on_past': False,
     'email_on_failure': False,
     'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
+    'retries': 2,
+    'retry_delay': timedelta(minutes=1),
 }
 
-# Define URL for Gateway API - can be overridden with Airflow Variables
+# MLflow configuration
+try:
+    MLFLOW_TRACKING_URI = Variable.get("MLFLOW_TRACKING_URI")
+except KeyError:
+    MLFLOW_TRACKING_URI = "http://mlflow:5000"
+
+# Define URL for Gateway API
 try:
     GATEWAY_API_URL = Variable.get("GATEWAY_API_URL")
 except KeyError:
     GATEWAY_API_URL = "http://gateway-api:8000"
+
 # All API endpoints are accessed through the Gateway
 DATA_API_URL = f"{GATEWAY_API_URL}/data"
 TRAINING_API_URL = f"{GATEWAY_API_URL}/training"
@@ -86,80 +100,117 @@ def get_auth_headers():
             print(f"Critical authentication error: {str(inner_e)}")
             raise
 
-def upload_csv_file(**context):
+def check_new_datasets(**context):
     """
-    Upload a CSV file to the Data API for processing via the Gateway API
+    Vérifie s'il y a de nouveaux datasets uploadés dans MLflow dans la dernière minute
     """
-    # Get the CSV file path from DAG parameters or context
-    csv_file_path = context['dag_run'].conf.get('csv_file_path', '/opt/airflow/dags/data/avis.csv')
-    
-    print(f"Uploading CSV file: {csv_file_path}")
-    
     try:
-        # Get authentication headers with token
-        headers = get_auth_headers()
+        # Configurer MLflow
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        client = MlflowClient()
         
-        # Remove Content-Type from headers for multipart/form-data
-        if "Content-Type" in headers:
-            del headers["Content-Type"]
+        # Calculer le timestamp d'il y a une minute
+        one_minute_ago = datetime.now() - timedelta(minutes=1)
+        timestamp_ms = int(one_minute_ago.timestamp() * 1000)
         
-        # Read the CSV file
-        if os.path.exists(csv_file_path):
-            with open(csv_file_path, 'rb') as file:
-                files = {'file': (os.path.basename(csv_file_path), file, 'text/csv')}
-                
-                # Make the POST request to upload the file through the Gateway API
-                print(f"Sending file to {DATA_API_URL}/upload")
-                response = requests.post(
-                    f"{DATA_API_URL}/upload",
-                    headers=headers,
-                    files=files
+        print(f"Checking for new datasets since: {one_minute_ago}")
+        
+        # Chercher les expériences récentes
+        experiments = client.search_experiments()
+        new_datasets = []
+        
+        for experiment in experiments:
+            try:
+                # Chercher les runs récents dans cette expérience
+                runs = client.search_runs(
+                    experiment_ids=[experiment.experiment_id],
+                    filter_string=f"attribute.start_time >= {timestamp_ms}",
+                    max_results=50
                 )
                 
-                # Check if the request was successful
-                response.raise_for_status()
-                
-                # Parse the response
-                result = response.json()
-                print(f"File uploaded successfully. Processed {result.get('n_processed_rows')} rows.")
-                
-                # Store the run_id and saved_path in XCom for the next task
-                context['ti'].xcom_push(key='run_id', value=result.get('run_id'))
-                context['ti'].xcom_push(key='saved_path', value=result.get('saved_path'))
-                context['ti'].xcom_push(key='stats', value=result.get('stats'))
-                
-                return result
+                for run in runs:
+                    # Vérifier s'il y a des artifacts de type dataset
+                    artifacts = client.list_artifacts(run.info.run_id)
+                    
+                    for artifact in artifacts:
+                        # Chercher les fichiers CSV ou datasets
+                        if (artifact.path.endswith('.csv') or 
+                            'dataset' in artifact.path.lower() or
+                            'data' in artifact.path.lower()):
+                            
+                            dataset_info = {
+                                "run_id": run.info.run_id,
+                                "experiment_id": experiment.experiment_id,
+                                "experiment_name": experiment.name,
+                                "artifact_path": artifact.path,
+                                "start_time": datetime.fromtimestamp(run.info.start_time / 1000),
+                                "run_name": run.data.tags.get("mlflow.runName", f"run_{run.info.run_id[:8]}")
+                            }
+                            
+                            new_datasets.append(dataset_info)
+                            print(f"Found new dataset: {artifact.path} in run {run.info.run_id}")
+            
+            except Exception as e:
+                print(f"Error checking experiment {experiment.name}: {str(e)}")
+                continue
+        
+        if new_datasets:
+            print(f"Found {len(new_datasets)} new datasets!")
+            # Stocker les informations pour les tâches suivantes
+            context['ti'].xcom_push(key='new_datasets', value=new_datasets)
+            context['ti'].xcom_push(key='has_new_data', value=True)
+            
+            # Prendre le dataset le plus récent pour le traitement
+            latest_dataset = max(new_datasets, key=lambda x: x['start_time'])
+            context['ti'].xcom_push(key='selected_dataset', value=latest_dataset)
+            
+            return True
         else:
-            error_msg = f"CSV file not found: {csv_file_path}"
-            print(error_msg)
-            raise FileNotFoundError(error_msg)
+            print("No new datasets found in the last minute")
+            context['ti'].xcom_push(key='has_new_data', value=False)
+            return False
             
     except Exception as e:
-        print(f"Error uploading CSV file: {str(e)}")
-        raise
+        print(f"Error checking for new datasets: {str(e)}")
+        context['ti'].xcom_push(key='has_new_data', value=False)
+        return False
 
-def train_model(**context):
+def train_model_from_mlflow(**context):
     """
-    Trigger model training via the Gateway API using the run_id from data upload
+    Lance l'entraînement directement avec le run_id MLflow détecté
     """
-    # Get the run_id from the previous task
-    run_id = context['ti'].xcom_pull(task_ids='upload_csv_file', key='run_id')
+    # Vérifier s'il y a des nouvelles données
+    has_new_data = context['ti'].xcom_pull(task_ids='check_new_datasets', key='has_new_data')
     
-    if not run_id:
-        error_msg = "No run_id available from previous task"
-        print(error_msg)
-        raise ValueError(error_msg)
+    if not has_new_data:
+        print("No new data detected, skipping training")
+        return None
     
-    print(f"Training model with run_id: {run_id}")
+    # Récupérer les informations du dataset MLflow sélectionné
+    selected_dataset = context['ti'].xcom_pull(task_ids='check_new_datasets', key='selected_dataset')
+    
+    if not selected_dataset:
+        raise ValueError("No dataset selected for training")
+    
+    mlflow_run_id = selected_dataset['run_id']
+    experiment_name = selected_dataset.get('experiment_name', 'unknown')
+    
+    # Générer un nom de modèle basé sur les métadonnées MLflow
+    source_run_id = mlflow_run_id[:8]
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+    model_name = f"auto_{experiment_name}_{source_run_id}_{timestamp}".replace(' ', '_').lower()
+    
+    print(f"Training model '{model_name}' with MLflow run_id: {mlflow_run_id}")
+    print(f"Source MLflow experiment: {experiment_name}")
     
     try:
         # Get authentication headers with token
         headers = get_auth_headers()
         
-        # Set up the training request
+        # Set up the training request - utilise directement le run_id MLflow
         training_request = {
-            "run_id": run_id,
-            "model_name": context['dag_run'].conf.get('model_name', None)  # Optional
+            "run_id": mlflow_run_id,  # Utilise le run_id MLflow directement
+            "model_name": model_name
         }
         
         # Make the POST request to train the model through the Gateway API
@@ -181,6 +232,16 @@ def train_model(**context):
         context['ti'].xcom_push(key='model_name', value=result.get('model_name'))
         context['ti'].xcom_push(key='model_version', value=result.get('model_version'))
         context['ti'].xcom_push(key='metrics', value=result.get('metrics'))
+        context['ti'].xcom_push(key='mlflow_source_run_id', value=mlflow_run_id)
+        
+        return result
+    
+    except Exception as e:
+        print(f"Error training model: {str(e)}")
+        raise
+        context['ti'].xcom_push(key='model_name', value=result.get('model_name'))
+        context['ti'].xcom_push(key='model_version', value=result.get('model_version'))
+        context['ti'].xcom_push(key='metrics', value=result.get('metrics'))
         
         return result
     
@@ -191,13 +252,21 @@ def train_model(**context):
 def validate_model(**context):
     """
     Validate the trained model via Gateway API
+    Auto-approve les modèles issus de nouveaux datasets MLflow
     """
-    # Get the model name and version from the previous task
-    model_name = context['ti'].xcom_pull(task_ids='train_model', key='model_name')
-    model_version = context['ti'].xcom_pull(task_ids='train_model', key='model_version')
+    # Vérifier s'il y a des nouvelles données
+    has_new_data = context['ti'].xcom_pull(task_ids='check_new_datasets', key='has_new_data')
+    
+    if not has_new_data:
+        print("No new data detected, skipping validation")
+        return None
+    
+    # Get the model name and version from the training task
+    model_name = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_name')
+    model_version = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_version')
     
     if not model_name or not model_version:
-        error_msg = "No model_name or model_version available from previous task"
+        error_msg = "No model_name or model_version available from training task"
         print(error_msg)
         raise ValueError(error_msg)
     
@@ -207,8 +276,8 @@ def validate_model(**context):
         # Get authentication headers with token
         headers = get_auth_headers()
         
-        # Set up the validation request with auto_approve if specified in the DAG run conf
-        auto_approve = context['dag_run'].conf.get('auto_approve', False)
+        # Auto-approve pour les modèles issus de MLflow
+        auto_approve = True  # Validation automatique pour les pipelines automatisés
         validation_request = {
             "model_name": model_name,
             "model_version": model_version,
@@ -236,33 +305,102 @@ def validate_model(**context):
         print(f"Error validating model: {str(e)}")
         raise
 
-# Create the DAG
+def cleanup_downloaded_files(**context):
+    """
+    Pas de nettoyage nécessaire car on ne télécharge plus de fichiers
+    """
+    print("No file downloads in this pipeline, no cleanup needed")
+    return
+
+def log_pipeline_summary(**context):
+    """
+    Log un résumé détaillé du pipeline automatisé incluant les métadonnées MLflow
+    """
+    has_new_data = context['ti'].xcom_pull(task_ids='check_new_datasets', key='has_new_data')
+    
+    if not has_new_data:
+        print("No new data processed in this execution")
+        return {"status": "no_new_data", "execution_date": context['execution_date'].isoformat()}
+    
+    # Collect information from all tasks
+    new_datasets = context['ti'].xcom_pull(task_ids='check_new_datasets', key='new_datasets')
+    selected_dataset = context['ti'].xcom_pull(task_ids='check_new_datasets', key='selected_dataset')
+    model_name = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_name')
+    model_version = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='model_version')
+    metrics = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='metrics')
+    mlflow_source_run_id = context['ti'].xcom_pull(task_ids='train_model_from_mlflow', key='mlflow_source_run_id')
+    
+    summary = {
+        "dag_run_id": context['dag_run'].run_id,
+        "execution_date": context['execution_date'].isoformat(),
+        "pipeline_type": "automated_mlflow_trigger",
+        "trigger_info": {
+            "total_new_datasets": len(new_datasets) if new_datasets else 0,
+            "selected_dataset": selected_dataset,
+            "mlflow_source_run": selected_dataset.get('run_id') if selected_dataset else None,
+            "mlflow_experiment": selected_dataset.get('experiment_name') if selected_dataset else None
+        },
+        "processing_results": {
+            "mlflow_source_run_id": mlflow_source_run_id,
+            "model_name": model_name,
+            "model_version": model_version,
+            "metrics": metrics
+        },
+        "status": "completed_successfully",
+        "note": "Training was done directly from MLflow run_id without file download"
+    }
+    
+    print("=== AUTOMATED PIPELINE EXECUTION SUMMARY ===")
+    print(json.dumps(summary, indent=2, default=str))
+    
+    return summary
+
+# Create the automated DAG
 with DAG(
-    'mlops_data_ingestion_training',
+    'mlops_automated_training',
     default_args=default_args,
-    description='Upload CSV data and train ML model',
-    schedule_interval=None,
+    description='Automated ML pipeline triggered by new MLflow datasets',
+    schedule_interval=timedelta(minutes=1),  # Exécute toutes les minutes
     start_date=days_ago(1),
     catchup=False,
-    tags=['mlops', 'data', 'training'],
+    tags=['mlops', 'automated', 'mlflow', 'training'],
+    max_active_runs=1,  # Éviter les exécutions concurrentes
 ) as dag:
 
-    t1 = PythonOperator(
-        task_id='upload_csv_file',
-        python_callable=upload_csv_file,
+    # Task 1: Check for new datasets in MLflow
+    check_datasets_task = PythonOperator(
+        task_id='check_new_datasets',
+        python_callable=check_new_datasets,
         provide_context=True,
     )
 
-    t2 = PythonOperator(
-        task_id='train_model',
-        python_callable=train_model,
+    # Task 2: Train model directly from MLflow run_id (conditional)
+    train_task = PythonOperator(
+        task_id='train_model_from_mlflow',
+        python_callable=train_model_from_mlflow,
         provide_context=True,
     )
 
-    t3 = PythonOperator(
+    # Task 3: Validate model (conditional)
+    validate_task = PythonOperator(
         task_id='validate_model',
         python_callable=validate_model,
         provide_context=True,
     )
 
-    t1 >> t2 >> t3
+    # Task 4: Log pipeline summary
+    summary_task = PythonOperator(
+        task_id='log_pipeline_summary',
+        python_callable=log_pipeline_summary,
+        provide_context=True,
+    )
+
+    # Task 5: Cleanup (dummy task since no files are downloaded)
+    cleanup_task = PythonOperator(
+        task_id='cleanup_downloaded_files',
+        python_callable=cleanup_downloaded_files,
+        provide_context=True,
+    )
+
+    # Define task dependencies - simplified workflow
+    check_datasets_task >> train_task >> validate_task >> [summary_task, cleanup_task]
