@@ -7,13 +7,7 @@ This DAG:
 3. Validates the newly trained model
 4. Runs every minute to ensure rapid response to new data
 
-The DAG checks for new datasets in MLflow artifacts        # Make the POST request to validate the model
-        print(f"Sending validation request to {TRAINING_ENDPOINT}/validate")
-        response = requests.post(
-            f"{TRAINING_ENDPOINT}/validate",
-            headers=headers,
-            json=validation_request
-        )ocesses them automatically,
+The DAG checks for new datasets in MLflow artifacts, processes them automatically,
 enabling a fully automated ML pipeline triggered by data uploads.
 """
 
@@ -28,12 +22,9 @@ import boto3
 from botocore.config import Config
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
 from airflow.models import Variable
 from airflow.hooks.base import BaseHook
 from airflow.utils.dates import days_ago
-from airflow.sensors.base import BaseSensorOperator
-from airflow.utils.decorators import apply_defaults
 
 # Default settings for the automated DAG
 default_args = {
@@ -402,13 +393,6 @@ def validate_model(**context):
         print(f"Error validating model: {str(e)}")
         raise
 
-def cleanup_downloaded_files(**context):
-    """
-    Pas de nettoyage nécessaire car on ne télécharge plus de fichiers
-    """
-    print("No file downloads in this pipeline, no cleanup needed")
-    return
-
 def log_pipeline_summary(**context):
     """
     Log un résumé détaillé du pipeline automatisé incluant les métadonnées MLflow
@@ -492,12 +476,5 @@ with DAG(
         provide_context=True,
     )
 
-    # Task 5: Cleanup (dummy task since no files are downloaded)
-    cleanup_task = PythonOperator(
-        task_id='cleanup_downloaded_files',
-        python_callable=cleanup_downloaded_files,
-        provide_context=True,
-    )
-
-    # Define task dependencies - simplified workflow
-    check_datasets_task >> train_task >> validate_task >> [summary_task, cleanup_task]
+    # Define task dependencies - simplified workflow without cleanup
+    check_datasets_task >> train_task >> validate_task >> summary_task
